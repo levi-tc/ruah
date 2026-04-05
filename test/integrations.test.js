@@ -1,0 +1,262 @@
+import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
+import {
+	buildGateCommands,
+	detectArhy,
+	detectCrag,
+	inferFileBoundaries,
+	parseArhyContract,
+	parseGovernance,
+	runGates,
+} from "../src/core/integrations.js";
+
+function tmpDir() {
+	const dir = join(tmpdir(), `ruah-int-${randomBytes(4).toString("hex")}`);
+	mkdirSync(dir, { recursive: true });
+	return dir;
+}
+
+describe("crag detection", () => {
+	let dir;
+	beforeEach(() => {
+		dir = tmpDir();
+	});
+	afterEach(() => {
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("returns false when governance.md absent", () => {
+		const result = detectCrag(dir);
+		assert.ok(!result.detected);
+	});
+
+	it("detects .claude/governance.md", () => {
+		mkdirSync(join(dir, ".claude"), { recursive: true });
+		writeFileSync(join(dir, ".claude", "governance.md"), "# Gov", "utf-8");
+		const result = detectCrag(dir);
+		assert.ok(result.detected);
+		assert.equal(result.path, ".claude/governance.md");
+	});
+
+	it("detects root governance.md", () => {
+		writeFileSync(join(dir, "governance.md"), "# Gov", "utf-8");
+		const result = detectCrag(dir);
+		assert.ok(result.detected);
+		assert.equal(result.path, "governance.md");
+	});
+});
+
+describe("parseGovernance", () => {
+	it("extracts gates with classifications", () => {
+		const content = `# Governance
+
+## Gates (run in order)
+### Lint
+- npx eslint src/ --max-warnings 0          # [MANDATORY]
+
+### Type check
+- npx tsc --noEmit                           # [MANDATORY]
+
+### Format check
+- npx prettier --check src/                  # [OPTIONAL]
+
+### Audit
+- npm audit                                  # [ADVISORY]
+`;
+
+		const result = parseGovernance(content);
+		assert.equal(result.gates.length, 4);
+		assert.equal(result.gates[0].command, "npx eslint src/ --max-warnings 0");
+		assert.equal(result.gates[0].classification, "MANDATORY");
+		assert.equal(result.gates[0].section, "Lint");
+		assert.equal(result.gates[2].classification, "OPTIONAL");
+		assert.equal(result.gates[3].classification, "ADVISORY");
+	});
+
+	it("defaults to MANDATORY when no classification", () => {
+		const content = `## Gates
+### Build
+- npm run build
+`;
+		const result = parseGovernance(content);
+		assert.equal(result.gates.length, 1);
+		assert.equal(result.gates[0].classification, "MANDATORY");
+	});
+
+	it("handles path annotations on sections", () => {
+		const content = `## Gates
+### Frontend (path: packages/frontend)
+- npm test  # [MANDATORY]
+`;
+		const result = parseGovernance(content);
+		assert.equal(result.gates[0].path, "packages/frontend");
+		assert.equal(result.gates[0].section, "Frontend");
+	});
+});
+
+describe("buildGateCommands", () => {
+	it("produces correct command list with cwd", () => {
+		const governance = {
+			gates: [
+				{
+					command: "npm test",
+					classification: "MANDATORY",
+					section: "Tests",
+					path: null,
+				},
+				{
+					command: "npm run lint",
+					classification: "OPTIONAL",
+					section: "Lint",
+					path: "frontend",
+				},
+			],
+		};
+		const commands = buildGateCommands(governance, "/work");
+		assert.equal(commands.length, 2);
+		assert.equal(commands[0].cwd, "/work");
+		assert.equal(commands[1].cwd, join("/work", "frontend"));
+	});
+});
+
+describe("runGates", () => {
+	it("passes when all commands succeed", () => {
+		const governance = {
+			gates: [
+				{
+					command: "true",
+					classification: "MANDATORY",
+					section: "Pass",
+					path: null,
+				},
+			],
+		};
+		const result = runGates(governance, "/tmp");
+		assert.ok(result.passed);
+		assert.equal(result.results.length, 1);
+		assert.ok(result.results[0].success);
+	});
+
+	it("fails on mandatory gate failure", () => {
+		const governance = {
+			gates: [
+				{
+					command: "false",
+					classification: "MANDATORY",
+					section: "Fail",
+					path: null,
+				},
+			],
+		};
+		const result = runGates(governance, "/tmp");
+		assert.ok(!result.passed);
+		assert.ok(result.failedGate);
+	});
+
+	it("continues on optional gate failure", () => {
+		const governance = {
+			gates: [
+				{
+					command: "false",
+					classification: "OPTIONAL",
+					section: "Opt",
+					path: null,
+				},
+				{
+					command: "true",
+					classification: "MANDATORY",
+					section: "Must",
+					path: null,
+				},
+			],
+		};
+		const result = runGates(governance, "/tmp");
+		assert.ok(result.passed);
+		assert.ok(!result.results[0].success);
+		assert.ok(result.results[1].success);
+	});
+
+	it("continues on advisory gate failure", () => {
+		const governance = {
+			gates: [
+				{
+					command: "false",
+					classification: "ADVISORY",
+					section: "Adv",
+					path: null,
+				},
+			],
+		};
+		const result = runGates(governance, "/tmp");
+		assert.ok(result.passed);
+	});
+});
+
+describe("arhy detection", () => {
+	let dir;
+	beforeEach(() => {
+		dir = tmpDir();
+	});
+	afterEach(() => {
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it("returns false when no .arhy files", () => {
+		const result = detectArhy(dir);
+		assert.ok(!result.detected);
+	});
+
+	it("detects .arhy files", () => {
+		writeFileSync(join(dir, "system.arhy"), "entity User {}", "utf-8");
+		const result = detectArhy(dir);
+		assert.ok(result.detected);
+		assert.equal(result.files.length, 1);
+	});
+});
+
+describe("parseArhyContract", () => {
+	it("parses entities with fields and actions", () => {
+		const content = `entity User {
+  id: string
+  name: string
+  action create
+  event UserCreated
+}
+
+entity Order {
+  id: string
+  total: number
+  action submit
+}`;
+
+		const result = parseArhyContract(content);
+		assert.equal(result.entities.length, 2);
+		assert.equal(result.entities[0].name, "User");
+		assert.equal(result.entities[0].fields.length, 2);
+		assert.equal(result.entities[0].actions[0], "create");
+		assert.equal(result.entities[0].events[0], "UserCreated");
+		assert.equal(result.entities[1].name, "Order");
+		assert.equal(result.entities[1].actions[0], "submit");
+	});
+});
+
+describe("inferFileBoundaries", () => {
+	it("maps entity names to file patterns", () => {
+		const contract = {
+			entities: [
+				{ name: "User", fields: [], actions: [], events: [] },
+				{ name: "Order", fields: [], actions: [], events: [] },
+			],
+		};
+		const boundaries = inferFileBoundaries(contract);
+		assert.ok(boundaries.User);
+		assert.ok(boundaries.User.includes("src/user/**"));
+		assert.ok(boundaries.User.includes("src/users/**"));
+		assert.ok(boundaries.Order);
+		assert.ok(boundaries.Order.includes("src/order/**"));
+	});
+});

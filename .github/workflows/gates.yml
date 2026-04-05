@@ -1,0 +1,30 @@
+# Generated from governance.md by crag
+# Regenerate: crag compile --target github
+name: Governance Gates
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  gates:
+    name: Governance Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - run: npm ci
+      - name: "lint & format: npx @biomejs/biome check --write ."
+        run: |
+          npx @biomejs/biome check --write .
+      - name: "lint & format: npx @biomejs/biome check ."
+        run: |
+          npx @biomejs/biome check .
+      - name: "test: node --test test/*.test.js"
+        run: |
+          node --test test/*.test.js

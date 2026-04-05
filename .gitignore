@@ -1,0 +1,7 @@
+node_modules/
+.claude/settings.local.json
+.claude/.discovery-cache.json
+.claude/.session-state.json
+.claude/.gates-passed
+.claude/.last-audit
+*.tgz
