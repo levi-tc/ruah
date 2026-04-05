@@ -8,6 +8,9 @@ import {
 	acquireLocks,
 	addHistoryEntry,
 	ensureStateDir,
+	getChildren,
+	getTaskLineage,
+	getUnmergedChildren,
 	loadState,
 	patternsOverlap,
 	releaseLocks,
@@ -138,5 +141,82 @@ describe("patternsOverlap", () => {
 
 	it("same string", () => {
 		assert.ok(patternsOverlap("src/file.js", "src/file.js"));
+	});
+});
+
+describe("subtask state functions", () => {
+	it("acquireLocks validates subtask within parent scope", () => {
+		const state = { locks: { parent: ["src/auth/**"] } };
+		// Within scope — should succeed
+		const ok = acquireLocks(state, "child", ["src/auth/api/**"], "parent");
+		assert.ok(ok.success);
+
+		// Outside scope — should fail
+		const fail = acquireLocks(state, "child2", ["lib/**"], "parent");
+		assert.ok(!fail.success);
+		assert.ok(fail.outOfScope);
+	});
+
+	it("acquireLocks allows subtask when parent has no locks", () => {
+		const state = { locks: {} };
+		const result = acquireLocks(state, "child", ["src/anything/**"], "parent");
+		assert.ok(result.success);
+	});
+
+	it("subtask does not conflict with parent locks", () => {
+		const state = { locks: { parent: ["src/**"] } };
+		// Subtask within parent's scope should not conflict with parent
+		const result = acquireLocks(state, "child", ["src/auth/**"], "parent");
+		assert.ok(result.success);
+	});
+
+	it("sibling subtasks can conflict", () => {
+		const state = {
+			locks: { parent: ["src/**"], child1: ["src/auth/**"] },
+		};
+		const result = acquireLocks(state, "child2", ["src/auth/**"], "parent");
+		assert.ok(!result.success);
+	});
+
+	it("getChildren returns only direct children", () => {
+		const state = {
+			tasks: {
+				root: { name: "root", parent: null },
+				child1: { name: "child1", parent: "root" },
+				child2: { name: "child2", parent: "root" },
+				grandchild: { name: "grandchild", parent: "child1" },
+				unrelated: { name: "unrelated", parent: null },
+			},
+		};
+		const children = getChildren(state, "root");
+		assert.equal(children.length, 2);
+		assert.ok(children.some((c) => c.name === "child1"));
+		assert.ok(children.some((c) => c.name === "child2"));
+	});
+
+	it("getUnmergedChildren excludes merged and cancelled", () => {
+		const state = {
+			tasks: {
+				root: { name: "root", parent: null },
+				a: { name: "a", parent: "root", status: "merged" },
+				b: { name: "b", parent: "root", status: "in-progress" },
+				c: { name: "c", parent: "root", status: "cancelled" },
+			},
+		};
+		const unmerged = getUnmergedChildren(state, "root");
+		assert.equal(unmerged.length, 1);
+		assert.equal(unmerged[0].name, "b");
+	});
+
+	it("getTaskLineage returns full ancestry", () => {
+		const state = {
+			tasks: {
+				root: { name: "root", parent: null },
+				mid: { name: "mid", parent: "root" },
+				leaf: { name: "leaf", parent: "mid" },
+			},
+		};
+		const lineage = getTaskLineage(state, "leaf");
+		assert.deepStrictEqual(lineage, ["root", "mid", "leaf"]);
 	});
 });

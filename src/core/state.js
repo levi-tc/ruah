@@ -60,14 +60,44 @@ export function addHistoryEntry(state, action, details = {}) {
 	}
 }
 
-export function acquireLocks(state, taskName, filePatterns) {
+export function acquireLocks(state, taskName, filePatterns, parentName) {
 	if (!filePatterns || filePatterns.length === 0) {
 		return { success: true, conflicts: [] };
+	}
+
+	// If this is a subtask, validate locks are within parent's scope
+	if (parentName) {
+		const parentLocks = state.locks[parentName];
+		if (parentLocks && parentLocks.length > 0) {
+			const outOfScope = [];
+			for (const requested of filePatterns) {
+				const withinParent = parentLocks.some((pl) =>
+					patternsOverlap(pl, requested),
+				);
+				if (!withinParent) {
+					outOfScope.push(requested);
+				}
+			}
+			if (outOfScope.length > 0) {
+				return {
+					success: false,
+					conflicts: outOfScope.map((p) => ({
+						task: parentName,
+						pattern: `parent scope: ${parentLocks.join(", ")}`,
+						requested: p,
+					})),
+					outOfScope: true,
+				};
+			}
+		}
 	}
 
 	const conflicts = [];
 	for (const [owner, owned] of Object.entries(state.locks)) {
 		if (owner === taskName) continue;
+		// Subtasks of the same parent don't conflict with the parent itself
+		if (parentName && owner === parentName) continue;
+		// Sibling subtasks can conflict with each other
 		for (const existing of owned) {
 			for (const requested of filePatterns) {
 				if (patternsOverlap(existing, requested)) {
@@ -83,6 +113,28 @@ export function acquireLocks(state, taskName, filePatterns) {
 
 	state.locks[taskName] = filePatterns;
 	return { success: true, conflicts: [] };
+}
+
+export function getChildren(state, parentName) {
+	return Object.values(state.tasks).filter((t) => t.parent === parentName);
+}
+
+export function getUnmergedChildren(state, parentName) {
+	return getChildren(state, parentName).filter(
+		(t) => t.status !== "merged" && t.status !== "cancelled",
+	);
+}
+
+export function getTaskLineage(state, taskName) {
+	const lineage = [];
+	let current = taskName;
+	while (current) {
+		const task = state.tasks[current];
+		if (!task) break;
+		lineage.unshift(current);
+		current = task.parent || null;
+	}
+	return lineage;
 }
 
 export function releaseLocks(state, taskName) {

@@ -154,4 +154,101 @@ describe("CLI integration", () => {
 		);
 		assert.equal(state.tasks.lifecycle.status, "merged");
 	});
+
+	it("subtask create branches from parent", () => {
+		ruah("init", repo);
+		ruah('task create parent-task --files "src/**"', repo);
+		ruah("task start parent-task --no-exec", repo);
+		const out = ruah(
+			'task create child-task --parent parent-task --files "src/child/**"',
+			repo,
+		);
+		assert.ok(out.includes("Parent: parent-task"));
+
+		const state = JSON.parse(
+			readFileSync(join(repo, ".ruah", "state.json"), "utf-8"),
+		);
+		assert.equal(state.tasks["child-task"].parent, "parent-task");
+		assert.ok(state.tasks["parent-task"].children.includes("child-task"));
+		// Subtask baseBranch should be parent's branch, not main
+		assert.ok(state.tasks["child-task"].baseBranch.includes("ruah/"));
+	});
+
+	it("subtask merge goes into parent branch, not base", () => {
+		ruah("init", repo);
+		ruah('task create parent2 --files "src/**"', repo);
+		ruah("task start parent2 --no-exec", repo);
+		ruah('task create child2 --parent parent2 --files "src/child/**"', repo);
+		ruah("task start child2 --no-exec", repo);
+		ruah("task done child2", repo);
+		const out = ruah("task merge child2", repo);
+		assert.ok(
+			out.toLowerCase().includes("parent"),
+			`Expected "parent" in output: ${out}`,
+		);
+		assert.ok(
+			out.toLowerCase().includes("merged"),
+			`Expected "merged" in output: ${out}`,
+		);
+	});
+
+	it("parent merge blocked with unmerged children", () => {
+		ruah("init", repo);
+		ruah('task create parent3 --files "src/**"', repo);
+		ruah("task start parent3 --no-exec", repo);
+		ruah('task create child3 --parent parent3 --files "src/child/**"', repo);
+		ruah("task done parent3", repo);
+
+		const out = ruah("task merge parent3", repo);
+		assert.ok(
+			out.toLowerCase().includes("subtask"),
+			`Expected merge to be blocked with subtask message: ${out}`,
+		);
+	});
+
+	it("cancel parent cascades to children", () => {
+		ruah("init", repo);
+		ruah('task create parent4 --files "src/**"', repo);
+		ruah("task start parent4 --no-exec", repo);
+		ruah('task create child4 --parent parent4 --files "src/child/**"', repo);
+		const out = ruah("task cancel parent4", repo);
+		assert.ok(out.includes("cancelled"));
+
+		const state = JSON.parse(
+			readFileSync(join(repo, ".ruah", "state.json"), "utf-8"),
+		);
+		assert.equal(state.tasks.child4.status, "cancelled");
+		assert.equal(state.tasks.parent4.status, "cancelled");
+	});
+
+	it("task children lists subtasks", () => {
+		ruah("init", repo);
+		ruah('task create parent5 --files "src/**"', repo);
+		ruah("task start parent5 --no-exec", repo);
+		ruah('task create child5a --parent parent5 --files "src/a/**"', repo);
+		ruah('task create child5b --parent parent5 --files "src/b/**"', repo);
+		const out = ruah("task children parent5 --json", repo);
+		const children = JSON.parse(out);
+		assert.equal(children.length, 2);
+		const names = children.map((c) => c.name);
+		assert.ok(names.includes("child5a"));
+		assert.ok(names.includes("child5b"));
+	});
+
+	it("subtask file locks must be within parent scope", () => {
+		ruah("init", repo);
+		ruah('task create parent6 --files "src/auth/**"', repo);
+		ruah("task start parent6 --no-exec", repo);
+
+		// This should fail — "lib/**" is outside parent's "src/auth/**" scope
+		const out = ruah(
+			'task create child6 --parent parent6 --files "lib/**"',
+			repo,
+		);
+		assert.ok(
+			out.toLowerCase().includes("scope") ||
+				out.toLowerCase().includes("conflict"),
+			`Expected scope/conflict error: ${out}`,
+		);
+	});
 });

@@ -14,6 +14,8 @@ import {
 import {
 	acquireLocks,
 	addHistoryEntry,
+	getChildren,
+	getUnmergedChildren,
 	loadState,
 	releaseLocks,
 	saveState,
@@ -52,6 +54,8 @@ export async function run(args) {
 			return taskList(args, root);
 		case "cancel":
 			return taskCancel(args, root);
+		case "children":
+			return taskChildren(args, root);
 		default:
 			logError(`Unknown task subcommand: ${sub}`);
 			process.exit(1);
@@ -71,20 +75,47 @@ function taskCreate(args, root) {
 	const baseBranch = args.flags.base;
 	const executor = args.flags.executor || null;
 	const prompt = args.flags.prompt || null;
+	const parentName = args.flags.parent || process.env.RUAH_PARENT_TASK || null;
 
 	const state = loadState(root);
-	const base = baseBranch || state.baseBranch;
 
 	if (state.tasks[name]) {
 		logError(`Task "${name}" already exists`);
 		process.exit(1);
 	}
 
-	// Check file locks
+	// Resolve base branch: subtasks branch from parent's branch, not base
+	let base;
+	let parentTask = null;
+	if (parentName) {
+		parentTask = state.tasks[parentName];
+		if (!parentTask) {
+			logError(`Parent task "${parentName}" not found`);
+			process.exit(1);
+		}
+		if (
+			parentTask.status !== "in-progress" &&
+			parentTask.status !== "created"
+		) {
+			logError(
+				`Parent task "${parentName}" is ${parentTask.status} — can only spawn subtasks from active tasks`,
+			);
+			process.exit(1);
+		}
+		base = parentTask.branch;
+	} else {
+		base = baseBranch || state.baseBranch;
+	}
+
+	// Check file locks (subtask locks validated against parent scope)
 	if (files.length > 0) {
-		const lockResult = acquireLocks(state, name, files);
+		const lockResult = acquireLocks(state, name, files, parentName);
 		if (!lockResult.success) {
-			logError("File lock conflict:");
+			if (lockResult.outOfScope) {
+				logError("Subtask file locks outside parent scope:");
+			} else {
+				logError("File lock conflict:");
+			}
 			for (const c of lockResult.conflicts) {
 				logWarn(
 					`  "${c.requested}" overlaps with "${c.pattern}" (locked by: ${c.task})`,
@@ -101,22 +132,38 @@ function taskCreate(args, root) {
 	state.tasks[name] = {
 		name,
 		status: "created",
-		baseBranch: base,
+		baseBranch: parentName ? parentTask.branch : base,
 		branch: branchName,
 		worktree: worktreePath,
 		files,
 		executor,
 		prompt,
+		parent: parentName || null,
+		children: [],
+		repoRoot: root,
 		createdAt: new Date().toISOString(),
 		startedAt: null,
 		completedAt: null,
 		mergedAt: null,
 	};
 
-	addHistoryEntry(state, "task.created", { task: name });
+	// Register child on parent
+	if (parentName && parentTask) {
+		if (!parentTask.children) parentTask.children = [];
+		parentTask.children.push(name);
+	}
+
+	addHistoryEntry(state, "task.created", {
+		task: name,
+		parent: parentName || null,
+	});
 	saveState(root, state);
 
 	logSuccess(`Task "${name}" created`);
+	if (parentName) {
+		log(`Parent: ${parentName}`);
+		log(`Branched from: ${base}`);
+	}
 	log(`Branch: ${branchName}`);
 	log(`Worktree: ${worktreePath}`);
 	if (files.length > 0) {
@@ -240,18 +287,37 @@ function taskMerge(args, root) {
 		process.exit(1);
 	}
 
+	// Block merge if task has unmerged children
+	const unmergedChildren = getUnmergedChildren(state, name);
+	if (unmergedChildren.length > 0) {
+		logError(
+			`Cannot merge "${name}" — ${unmergedChildren.length} subtask(s) not yet merged:`,
+		);
+		for (const child of unmergedChildren) {
+			logWarn(`  ${child.name} (${child.status})`);
+		}
+		logInfo("Merge or cancel all subtasks first.");
+		process.exit(1);
+	}
+
 	const dryRun = args.flags["dry-run"];
 	const skipGates = args.flags["skip-gates"];
 
+	// Determine merge target — subtasks merge into parent branch, not base
+	const mergeTarget = task.baseBranch;
+	const isSubtask = !!task.parent;
+
 	if (dryRun) {
-		const diff = getWorktreeDiff(name, task.baseBranch, root);
-		log("Dry run — changes that would be merged:");
+		const diff = getWorktreeDiff(name, mergeTarget, root);
+		log(
+			`Dry run — changes that would be merged into ${isSubtask ? `parent (${task.parent})` : mergeTarget}:`,
+		);
 		console.log(diff || "  (no changes)");
 		return;
 	}
 
-	// crag gate enforcement
-	if (!skipGates) {
+	// crag gate enforcement (skip for subtasks merging into parent — gates run on parent merge)
+	if (!skipGates && !isSubtask) {
 		const crag = detectCrag(root);
 		if (crag.detected) {
 			log("Running crag gates...");
@@ -265,7 +331,7 @@ function taskMerge(args, root) {
 						);
 					} else if (r.classification === "MANDATORY") {
 						logError(`[MANDATORY] ${r.section || r.command}: FAILED`);
-						logError(`Merge blocked. Fix the issue or use --skip-gates`);
+						logError("Merge blocked. Fix the issue or use --skip-gates");
 						process.exit(1);
 					} else if (r.classification === "OPTIONAL") {
 						logWarn(
@@ -284,22 +350,42 @@ function taskMerge(args, root) {
 				logSuccess("All mandatory gates passed");
 			}
 		}
+	} else if (isSubtask && !skipGates) {
+		logInfo("Subtask merge — gates deferred to parent merge into base branch");
 	} else {
 		logWarn("Skipping crag gates (--skip-gates)");
 	}
 
-	// Merge
-	const result = mergeWorktree(name, task.baseBranch, root);
+	// Merge — subtasks merge from within the parent's worktree
+	const mergeOpts = {};
+	if (isSubtask) {
+		const parentTask = state.tasks[task.parent];
+		if (parentTask?.worktree) {
+			mergeOpts.parentWorktree = parentTask.worktree;
+		}
+	}
+	const result = mergeWorktree(name, mergeTarget, root, mergeOpts);
 
 	if (result.success) {
 		task.status = "merged";
 		task.mergedAt = new Date().toISOString();
 		releaseLocks(state, name);
-		addHistoryEntry(state, "task.merged", { task: name });
+		addHistoryEntry(state, "task.merged", {
+			task: name,
+			target: mergeTarget,
+			parent: task.parent || null,
+		});
 		saveState(root, state);
 
 		removeWorktree(name, root);
-		logSuccess(`Task "${name}" merged into ${task.baseBranch}`);
+
+		if (isSubtask) {
+			logSuccess(
+				`Subtask "${name}" merged into parent "${task.parent}" (${mergeTarget})`,
+			);
+		} else {
+			logSuccess(`Task "${name}" merged into ${mergeTarget}`);
+		}
 	} else {
 		logError("Merge conflicts detected:");
 		for (const f of result.conflicts) {
@@ -318,13 +404,68 @@ function taskList(args, root) {
 		return;
 	}
 
+	// Build tree: show root tasks, then indent children
+	const rootTasks = Object.values(state.tasks).filter((t) => !t.parent);
+	const childrenOf = (parentName) =>
+		Object.values(state.tasks).filter((t) => t.parent === parentName);
+
 	log("Tasks:");
-	console.log(formatTaskList(state.tasks));
+	if (rootTasks.length === 0 && Object.keys(state.tasks).length === 0) {
+		console.log(formatTaskList(state.tasks));
+	} else {
+		for (const task of rootTasks) {
+			console.log(formatTask(task));
+			const children = childrenOf(task.name);
+			for (const child of children) {
+				console.log(`  ${formatTask(child)}`);
+			}
+		}
+		// Show orphaned tasks (parent was cancelled/removed)
+		const orphans = Object.values(state.tasks).filter(
+			(t) => t.parent && !state.tasks[t.parent],
+		);
+		for (const orphan of orphans) {
+			console.log(formatTask(orphan));
+		}
+	}
 
 	if (Object.keys(state.locks).length > 0) {
 		console.log("");
 		log("File locks:");
 		console.log(formatLocks(state.locks));
+	}
+}
+
+function taskChildren(args, root) {
+	const name = args._[2];
+	if (!name) {
+		logError("Missing task name. Usage: ruah task children <name>");
+		process.exit(1);
+	}
+
+	const state = loadState(root);
+	const task = state.tasks[name];
+	if (!task) {
+		logError(`Task "${name}" not found`);
+		process.exit(1);
+	}
+
+	const json = args.flags.json;
+	const children = getChildren(state, name);
+
+	if (json) {
+		console.log(JSON.stringify(children, null, 2));
+		return;
+	}
+
+	if (children.length === 0) {
+		log(`Task "${name}" has no subtasks`);
+		return;
+	}
+
+	log(`Subtasks of "${name}":`);
+	for (const child of children) {
+		console.log(formatTask(child));
 	}
 }
 
@@ -344,6 +485,21 @@ function taskCancel(args, root) {
 	if (task.status === "merged") {
 		logError(`Task "${name}" is already merged, cannot cancel`);
 		process.exit(1);
+	}
+
+	// Cascade cancel to all children
+	const children = getChildren(state, name);
+	for (const child of children) {
+		if (child.status !== "merged" && child.status !== "cancelled") {
+			removeWorktree(child.name, root);
+			child.status = "cancelled";
+			releaseLocks(state, child.name);
+			addHistoryEntry(state, "task.cancelled", {
+				task: child.name,
+				reason: `parent "${name}" cancelled`,
+			});
+			logWarn(`Subtask "${child.name}" cancelled (parent cancelled)`);
+		}
 	}
 
 	removeWorktree(name, root);

@@ -9,7 +9,7 @@ When multiple AI agents (Claude Code, Aider, Codex, etc.) work on the same codeb
 ## Install
 
 ```bash
-npm install -g @whitehatd/ruah
+npm install -g @levi-tc/ruah
 ```
 
 ## Quick Start
@@ -103,19 +103,53 @@ Built-in adapters for common AI agents:
 | `claude-code` | Claude Code CLI |
 | `aider` | Aider |
 | `codex` | OpenAI Codex CLI |
+| `open-code` | OpenCode CLI |
 | `script` | Any shell command |
 
 Unknown executor names are treated as raw shell commands.
+
+### Subagent Spawning
+
+Any agent running inside a task can spawn subtasks. Subtasks get their own worktrees, branched from the parent's branch — not from base.
+
+```bash
+# Parent creates a subtask (from within a running agent's CLI)
+ruah task create auth-api --parent auth --files "src/auth/api/**" --executor codex --prompt "Build auth API"
+ruah task create auth-ui --parent auth --files "src/auth/ui/**" --executor aider --prompt "Build auth UI"
+
+# Subtasks run in parallel
+ruah task start auth-api
+ruah task start auth-ui
+
+# Subtasks merge into parent branch
+ruah task done auth-api && ruah task merge auth-api
+ruah task done auth-ui && ruah task merge auth-ui
+
+# Now parent can merge into base (all children must be merged first)
+ruah task done auth && ruah task merge auth
+```
+
+**How it works:**
+- `--parent <task>` branches from the parent's worktree branch, not base
+- Subtask file locks must be within the parent's lock scope
+- Subtask merges go into the parent branch (gates deferred to parent merge)
+- Parent merge is blocked until all children are merged or cancelled
+- Cancelling a parent cascades to all children
+- Each executor receives env vars: `RUAH_TASK`, `RUAH_PARENT_TASK`, `RUAH_ROOT`, `RUAH_FILES`, `RUAH_WORKTREE`
+- A `.ruah-task.md` is written into each worktree with subtask spawning instructions
+
+**Works with any CLI** — the env vars and task file are executor-agnostic. Claude Code, Codex, Aider, OpenCode, or any custom script can read them and call `ruah task create --parent $RUAH_TASK`.
 
 ## CLI Reference
 
 ```
 ruah init [--force]
-ruah task create <name> [--files <globs>] [--base <branch>] [--executor <cmd>] [--prompt <text>]
+ruah task create <name> [--files <globs>] [--base <branch>] [--executor <cmd>] [--prompt <text>] [--parent <task>]
 ruah task start <name> [--no-exec] [--dry-run]
 ruah task done <name>
 ruah task merge <name> [--dry-run] [--skip-gates]
 ruah task list [--json]
+ruah task children <name> [--json]
 ruah task cancel <name>
 ruah workflow run <file.md> [--dry-run] [--json]
 ruah workflow plan <file.md> [--json]

@@ -15,6 +15,10 @@ const ADAPTERS = {
 		command: "codex",
 		args: [prompt],
 	}),
+	"open-code": (prompt) => ({
+		command: "opencode",
+		args: ["-p", prompt],
+	}),
 	script: (prompt) => {
 		const parts = prompt.split(/\s+/);
 		return {
@@ -48,9 +52,44 @@ export function executeTask(taskDef, worktreePath, opts = {}) {
 		args = [...parts.slice(1), prompt].filter(Boolean);
 	}
 
-	// Write task file for reference
+	// Write task file with context and subagent instructions
 	const taskFile = join(worktreePath, ".ruah-task.md");
-	writeFileSync(taskFile, `# Task: ${taskDef.name}\n\n${prompt}\n`, "utf-8");
+	const parentInfo = taskDef.parent
+		? `\n## Parent Task\n- Parent: ${taskDef.parent}\n- This is a subtask — merges into parent branch, not base.\n`
+		: "";
+	const filesInfo =
+		taskDef.files?.length > 0
+			? `\n## File Scope\n- Locked files: ${taskDef.files.join(", ")}\n`
+			: "";
+	const subagentGuide = `
+## Spawning Subtasks
+
+You can split work into subtasks. Each subtask gets its own worktree.
+
+\`\`\`bash
+# Create a subtask (inherits your worktree as base)
+ruah task create <name> --parent ${taskDef.name} --files "src/sub/**" --executor <cli> --prompt "..."
+
+# Start it
+ruah task start <name>
+
+# When subtask is done
+ruah task done <name>
+ruah task merge <name>   # merges into YOUR branch, not base
+\`\`\`
+
+Available executors: claude-code, aider, codex, open-code, script
+
+Environment variables available:
+- RUAH_TASK=${taskDef.name}
+- RUAH_WORKTREE=${worktreePath}
+- RUAH_EXECUTOR=${executorName}${taskDef.parent ? `\n- RUAH_PARENT_TASK=${taskDef.parent}` : ""}${taskDef.repoRoot ? `\n- RUAH_ROOT=${taskDef.repoRoot}` : ""}${taskDef.files?.length > 0 ? `\n- RUAH_FILES=${taskDef.files.join(",")}` : ""}
+`;
+	writeFileSync(
+		taskFile,
+		`# Task: ${taskDef.name}\n\n${prompt}\n${parentInfo}${filesInfo}${subagentGuide}`,
+		"utf-8",
+	);
 
 	if (dryRun) {
 		return Promise.resolve({
@@ -61,13 +100,29 @@ export function executeTask(taskDef, worktreePath, opts = {}) {
 	}
 
 	return new Promise((resolve) => {
+		const taskEnv = {
+			...process.env,
+			RUAH_TASK: taskDef.name,
+			RUAH_WORKTREE: worktreePath,
+			RUAH_EXECUTOR: executorName,
+		};
+
+		// Subagent context: pass parent info + repo root so spawned CLIs
+		// can call `ruah task create --parent $RUAH_TASK` from within execution
+		if (taskDef.parent) {
+			taskEnv.RUAH_PARENT_TASK = taskDef.parent;
+		}
+		if (taskDef.repoRoot) {
+			taskEnv.RUAH_ROOT = taskDef.repoRoot;
+		}
+		// Pass file lock scope so agents know their boundaries
+		if (taskDef.files?.length > 0) {
+			taskEnv.RUAH_FILES = taskDef.files.join(",");
+		}
+
 		const child = spawn(cmd, args, {
 			cwd: worktreePath,
-			env: {
-				...process.env,
-				RUAH_TASK: taskDef.name,
-				RUAH_WORKTREE: worktreePath,
-			},
+			env: taskEnv,
 			stdio: silent ? "pipe" : "inherit",
 			shell: process.platform === "win32",
 		});

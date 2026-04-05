@@ -17,8 +17,9 @@ Task subcommands:
   create <name>  Create a task with isolated worktree
     --files <globs>      File patterns to lock (comma-separated)
     --base <branch>      Base branch (default: from state)
-    --executor <cmd>     Agent executor (claude-code|aider|codex|script)
+    --executor <cmd>     Agent executor (claude-code|aider|codex|open-code|script)
     --prompt <text>      Prompt for the agent
+    --parent <task>      Create as subtask (branches from parent)
   start <name>   Start task execution
     --no-exec            Create worktree only, don't run executor
     --dry-run            Show what would be executed
@@ -26,9 +27,11 @@ Task subcommands:
   merge <name>   Merge task into base branch
     --dry-run            Show diff without merging
     --skip-gates         Skip crag gate enforcement
-  list           List all tasks
+  list           List all tasks (shows hierarchy)
     --json               Output as JSON
-  cancel <name>  Cancel and clean up task
+  children <name> List subtasks of a task
+    --json               Output as JSON
+  cancel <name>  Cancel and clean up task (cascades to subtasks)
 
 Workflow subcommands:
   run <file.md>  Execute a workflow

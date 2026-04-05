@@ -85,29 +85,43 @@ export function removeWorktree(taskName, repoRoot) {
 	});
 }
 
-export function mergeWorktree(taskName, baseBranch, repoRoot) {
+export function mergeWorktree(taskName, baseBranch, repoRoot, opts = {}) {
 	const safe = sanitizeName(taskName);
 	const branchName = `ruah/${safe}`;
 
-	// Ensure we're on the base branch
-	git(`checkout ${baseBranch}`, { cwd: repoRoot, silent: true });
+	// For subtask merges, the target branch is already checked out in the
+	// parent's worktree. Merge from there instead of the repo root.
+	const mergeCwd = opts.parentWorktree || repoRoot;
+
+	if (!opts.parentWorktree) {
+		// Standard merge: checkout target branch in repo root
+		git(`checkout ${baseBranch}`, { cwd: repoRoot, silent: true });
+	}
+	// else: parentWorktree already has the target branch checked out
 
 	try {
 		git(`merge ${branchName} --no-ff -m "ruah: merge ${taskName}"`, {
-			cwd: repoRoot,
+			cwd: mergeCwd,
 			silent: true,
 		});
 		return { success: true, conflicts: [] };
 	} catch {
 		// Check for merge conflicts
-		const status = git("status --porcelain", { cwd: repoRoot, silent: true });
+		const status = git("status --porcelain", {
+			cwd: mergeCwd,
+			silent: true,
+		});
 		const conflicts = status
 			.split("\n")
 			.filter((line) => /^(UU|AA|DD|AU|UA|DU|UD)/.test(line))
 			.map((line) => line.slice(3).trim());
 
 		// Abort the failed merge
-		git("merge --abort", { cwd: repoRoot, silent: true, ignoreError: true });
+		git("merge --abort", {
+			cwd: mergeCwd,
+			silent: true,
+			ignoreError: true,
+		});
 
 		return { success: false, conflicts };
 	}
