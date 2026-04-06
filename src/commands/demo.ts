@@ -17,11 +17,7 @@ function c(color: string, text: string): string {
 		green: "\x1b[32m",
 		red: "\x1b[31m",
 		yellow: "\x1b[33m",
-		blue: "\x1b[34m",
 		magenta: "\x1b[35m",
-		white: "\x1b[37m",
-		bgRed: "\x1b[41m",
-		bgGreen: "\x1b[42m",
 	};
 	return `${codes[color] ?? ""}${text}${codes.reset}`;
 }
@@ -46,28 +42,25 @@ function dim(text: string): string {
 	return c("dim", text);
 }
 
-function box(lines: string[], { width = 58 } = {}): void {
-	const top = `  ┌${"─".repeat(width - 2)}┐`;
-	const bot = `  └${"─".repeat(width - 2)}┘`;
-	console.log(top);
+function box(lines: string[]): void {
+	const W = 60;
+	console.log(`  ┌${"─".repeat(W)}┐`);
 	for (const l of lines) {
 		console.log(`  │ ${l}`);
 	}
-	console.log(bot);
+	console.log(`  └${"─".repeat(W)}┘`);
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape stripping requires matching ESC control char
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
-// Pad visible text to fixed width inside box (accounts for ANSI codes)
 function pad(text: string, w: number): string {
-	// Strip ANSI to measure visible length
 	const visible = text.replace(ANSI_RE, "");
 	const diff = w - visible.length;
 	return diff > 0 ? `${text}${" ".repeat(diff)}` : text;
 }
 
-const W = 56; // inner width of box (58 - 2 for borders)
+const W = 58; // inner width (box width 60 - 2 for padding)
 
 export async function run(_args: ParsedArgs): Promise<void> {
 	const fast = _args.flags.fast === true;
@@ -78,8 +71,6 @@ export async function run(_args: ParsedArgs): Promise<void> {
 		`  ${c("bold", c("cyan", "ruah"))} ${dim("— multi-agent orchestration")}`,
 	);
 	line();
-
-	// ── The Problem ────────────────────────────────────────
 	line(`  ${c("bold", "The problem:")} two AI agents edit the same file`);
 	line(`  ${dim("→ merge conflict, lost work, broken code")}`);
 	line();
@@ -107,7 +98,6 @@ export async function run(_args: ParsedArgs): Promise<void> {
 			stdio: "pipe",
 		});
 
-		// Create realistic file structure
 		for (const f of [
 			"src/auth/login.ts",
 			"src/auth/session.ts",
@@ -125,57 +115,38 @@ export async function run(_args: ParsedArgs): Promise<void> {
 		});
 
 		ok("Demo repo ready");
-		line();
 		await sleep(delay * 2);
 
 		// ── Create Tasks ─────────────────────────────────────
-		step("Creating 3 parallel tasks with file locks...");
 		line();
+		step("Creating 3 parallel tasks with file locks...");
 		await sleep(delay);
 
 		const tasks = [
-			{
-				name: "auth-api",
-				files: "src/auth/**",
-				executor: "claude-code",
-				color: "cyan",
-			},
-			{
-				name: "dashboard-ui",
-				files: "src/ui/**",
-				executor: "aider",
-				color: "green",
-			},
-			{
-				name: "test-suite",
-				files: "tests/**",
-				executor: "codex",
-				color: "magenta",
-			},
+			{ name: "auth-api", files: "src/auth/**", executor: "claude-code" },
+			{ name: "dashboard-ui", files: "src/ui/**", executor: "aider" },
+			{ name: "test-suite", files: "tests/**", executor: "codex" },
 		];
 
-		const boxLines: string[] = [];
+		const taskLines: string[] = [];
 		for (const t of tasks) {
-			const taskStr = c("bold", t.name.padEnd(14));
-			const filesStr = dim(t.files.padEnd(14));
-			const lockStr = c("yellow", "🔒 locked");
-			const exStr = dim(`(${t.executor})`);
-			boxLines.push(
-				pad(`${c("green", "✓")} ${taskStr} ${filesStr} ${lockStr} ${exStr}`, W),
+			const name = c("bold", t.name.padEnd(14));
+			const files = dim(t.files.padEnd(14));
+			const lock = c("yellow", "🔒 locked");
+			const ex = dim(`(${t.executor})`);
+			taskLines.push(
+				pad(`${c("green", "✓")} ${name} ${files} ${lock} ${ex}`, W),
 			);
 		}
-		boxLines.push(pad("", W));
-		boxLines.push(
-			pad(`${dim("Each task → own git worktree → zero interference")}`, W),
+		taskLines.push(
+			pad(dim("Each task → own git worktree → zero interference"), W),
 		);
-
-		box(boxLines);
-		line();
+		box(taskLines);
 		await sleep(delay * 3);
 
 		// ── Conflict Detection ───────────────────────────────
-		step("What if a 4th agent tries to touch locked files?");
 		line();
+		step("What if a 4th agent tries to touch locked files?");
 		await sleep(delay * 2);
 
 		const conflictLines: string[] = [];
@@ -191,18 +162,15 @@ export async function run(_args: ParsedArgs): Promise<void> {
 				W,
 			),
 		);
-		conflictLines.push(pad("", W));
 		conflictLines.push(
 			pad(dim("File locks catch conflicts before agents start."), W),
 		);
-
 		box(conflictLines);
-		line();
 		await sleep(delay * 3);
 
 		// ── Workflow DAG ─────────────────────────────────────
-		step("Defining a workflow DAG...");
 		line();
+		step("Defining a workflow DAG...");
 		await sleep(delay * 2);
 
 		const dagLines: string[] = [];
@@ -226,20 +194,18 @@ export async function run(_args: ParsedArgs): Promise<void> {
 				W,
 			),
 		);
-		dagLines.push(pad("", W));
 		dagLines.push(pad(dim("Define in markdown. ruah handles the rest."), W));
-
 		box(dagLines);
-		line();
 		await sleep(delay * 2);
 
 		// ── Real Commands ────────────────────────────────────
-		line(`  ${c("bold", "Try it yourself:")}`);
 		line();
+		line(`  ${c("bold", "Try it yourself:")}`);
 		line(`    ${c("cyan", "$")} npx @levi-tc/ruah init`);
-		line(`    ${c("cyan", "$")} npx @levi-tc/ruah task create auth \\`);
-		line(`        --files "src/auth/**" --executor claude-code`);
-		line(`    ${c("cyan", "$")} npx @levi-tc/ruah workflow run feature.md`);
+		line(
+			`    ${c("cyan", "$")} ruah task create auth --files "src/auth/**" --executor claude-code`,
+		);
+		line(`    ${c("cyan", "$")} ruah workflow run feature.md`);
 		line();
 
 		// ── Cleanup ──────────────────────────────────────────
@@ -247,7 +213,6 @@ export async function run(_args: ParsedArgs): Promise<void> {
 		ok(`Demo repo cleaned up ${dim(`(was ${dir})`)}`);
 		line();
 	} catch (err) {
-		// Always clean up
 		if (existsSync(dir)) {
 			rmSync(dir, { recursive: true, force: true });
 		}
