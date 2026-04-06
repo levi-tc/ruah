@@ -38,6 +38,14 @@ export function reconcileStateWithGit(
 			continue;
 		}
 
+		// Only auto-reconcile "done" tasks. Tasks in created/in-progress/failed
+		// haven't completed their lifecycle — auto-removing them causes the
+		// "disappearing tasks" bug (freshly created branches are trivially
+		// ancestors of their base, so isBranchMerged returns a false positive).
+		if (task.status !== "done") {
+			continue;
+		}
+
 		if (
 			!branchExists(task.branch, root) ||
 			!branchExists(task.baseBranch, root)

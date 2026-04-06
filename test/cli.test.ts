@@ -176,7 +176,7 @@ describe("CLI integration", () => {
 		assert.ok(!state.locks.lifecycle);
 	});
 
-	it("status auto-reconciles tasks merged outside ruah", () => {
+	it("status auto-reconciles done tasks merged outside ruah", () => {
 		ruah("init", repo);
 		ruah('task create external-merge --files "README.md"', repo);
 		ruah("task start external-merge --no-exec", repo);
@@ -194,6 +194,10 @@ describe("CLI integration", () => {
 			cwd: task.worktree,
 			stdio: "pipe",
 		});
+
+		// Mark task as done before the external merge
+		ruah("task done external-merge", repo);
+
 		execSync(`git checkout ${before.baseBranch}`, { cwd: repo, stdio: "pipe" });
 		execSync(
 			`git merge ${task.branch} --no-ff -m "manual merge outside ruah"`,
@@ -216,6 +220,23 @@ describe("CLI integration", () => {
 		const after = JSON.parse(readFileSync(statePath, "utf-8"));
 		assert.equal(after.tasks["external-merge"], undefined);
 		assert.equal(after.locks["external-merge"], undefined);
+	});
+
+	it("status does not auto-reconcile in-progress or created tasks", () => {
+		ruah("init", repo);
+		ruah('task create fresh-task --files "README.md"', repo);
+
+		// Task exists before status
+		const statePath = join(repo, ".ruah", "state.json");
+		const before = JSON.parse(readFileSync(statePath, "utf-8"));
+		assert.ok(before.tasks["fresh-task"]);
+
+		// Running status should NOT remove the task
+		ruah("status --json", repo);
+
+		const after = JSON.parse(readFileSync(statePath, "utf-8"));
+		assert.ok(after.tasks["fresh-task"], "fresh task should survive status");
+		assert.equal(after.tasks["fresh-task"].status, "created");
 	});
 
 	it("status prunes merged tasks already persisted in state", () => {

@@ -1,8 +1,37 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { ParsedArgs } from "../cli.js";
 import { getRepoRoot, isGitRepo } from "../core/git.js";
 import { log, logError, logInfo, logSuccess } from "../utils/format.js";
+
+// --- Enforcement Hook (installed for all harnesses that support hooks) ---
+
+const ENFORCE_HOOK = `#!/bin/bash
+# ruah-enforce.sh — Enforce ruah usage for file modifications
+# Installed by: ruah setup
+# Change exit 0 to exit 2 at the bottom to hard-block edits outside tasks.
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+
+# Skip if not a ruah-initialized project
+[ -d "$ROOT/.ruah" ] || exit 0
+
+# Skip if already inside a ruah task worktree
+[ -n "$RUAH_TASK" ] && exit 0
+
+echo "⚠️  ruah is active. Editing files outside a task worktree risks merge conflicts."
+echo "   Create a task: ruah task create <name> --files \\"src/**\\" --executor claude-code --prompt \\"...\\""
+echo "   Or check status: ruah status"
+
+# Advisory warning (exit 0). Change to exit 2 to block edits entirely.
+exit 0
+`;
 
 // --- Claude Code Integration ---
 
@@ -68,7 +97,15 @@ Every command supports \`--json\` for structured output.
 
 const CURSOR_RULE = `# ruah — Multi-Agent Orchestration
 
-This project uses \`ruah\` for multi-agent orchestration.
+> **⚠️ ENFORCEMENT**: This project uses ruah for multi-agent orchestration.
+> You MUST create a ruah task before modifying source files.
+> Editing files directly on the main branch risks merge conflicts with other agents.
+>
+> Before editing any source file:
+> 1. \`ruah task create <name> --files "src/**" --executor cursor --prompt "describe the task"\`
+> 2. \`ruah task start <name>\`
+> 3. Work inside the task worktree
+> 4. \`ruah task done <name> && ruah task merge <name>\`
 
 ## Available Commands
 - \`ruah status --json\` — project status with task counts
@@ -133,6 +170,75 @@ function getTargets(root: string): SetupTarget[] {
 	];
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: JSON structure varies
+type JsonObject = Record<string, any>;
+
+function installClaudeHooks(root: string, force: boolean): boolean {
+	const hooksDir = join(root, ".claude", "hooks");
+	const hookPath = join(hooksDir, "ruah-enforce.sh");
+	const settingsPath = join(root, ".claude", "settings.local.json");
+
+	// Write hook script
+	mkdirSync(hooksDir, { recursive: true });
+
+	if (existsSync(hookPath) && !force) {
+		const existing = readFileSync(hookPath, "utf-8");
+		if (existing.includes("ruah-enforce")) {
+			return false;
+		}
+	}
+
+	writeFileSync(hookPath, ENFORCE_HOOK, "utf-8");
+	chmodSync(hookPath, 0o755);
+
+	// Update settings.local.json — merge, don't overwrite
+	let settings: JsonObject = {};
+	if (existsSync(settingsPath)) {
+		try {
+			settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+		} catch {
+			settings = {};
+		}
+	}
+
+	if (!settings.hooks) settings.hooks = {};
+	if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
+
+	const preToolUse = settings.hooks.PreToolUse as JsonObject[];
+	const hookCmd = "bash .claude/hooks/ruah-enforce.sh";
+
+	// Check if already installed
+	const alreadyInstalled = preToolUse.some((entry) =>
+		(entry.hooks as JsonObject[])?.some((h) =>
+			(h.command as string)?.includes("ruah-enforce"),
+		),
+	);
+
+	if (!alreadyInstalled) {
+		for (const matcher of ["Edit", "Write"]) {
+			const existing = preToolUse.find((e) => e.matcher === matcher);
+			if (existing) {
+				(existing.hooks as JsonObject[]).push({
+					type: "command",
+					command: hookCmd,
+				});
+			} else {
+				preToolUse.push({
+					matcher,
+					hooks: [{ type: "command", command: hookCmd }],
+				});
+			}
+		}
+		writeFileSync(
+			settingsPath,
+			`${JSON.stringify(settings, null, 2)}\n`,
+			"utf-8",
+		);
+	}
+
+	return true;
+}
+
 export async function run(args: ParsedArgs): Promise<void> {
 	if (!isGitRepo()) {
 		logError("Not a git repository. Run git init first.");
@@ -184,12 +290,23 @@ export async function run(args: ParsedArgs): Promise<void> {
 		installed++;
 	}
 
+	// Install enforcement hooks (Claude Code gets a PreToolUse hook,
+	// other harnesses rely on the enforcement language in their rules)
+	const hookInstalled = installClaudeHooks(root, !!force);
+	if (hookInstalled) {
+		logSuccess("Claude Code: installed enforcement hook (PreToolUse)");
+		installed++;
+	} else {
+		logInfo("Claude Code: enforcement hook exists (skipped)");
+	}
+
 	console.log("");
 	log(`Done: ${installed} installed, ${skipped} skipped`);
 
 	if (installed > 0) {
 		console.log("");
 		logInfo("AI agents will now auto-detect ruah in this project.");
+		logInfo("Enforcement: agents are warned when editing outside a ruah task.");
 		logInfo("Run 'ruah setup --force' to overwrite existing files.");
 	}
 }
