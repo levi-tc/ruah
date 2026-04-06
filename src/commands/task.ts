@@ -1,4 +1,5 @@
 import type { ParsedArgs } from "../cli.js";
+import { loadConfig } from "../core/config.js";
 import { executeTask } from "../core/executor.js";
 import {
 	createWorktree,
@@ -59,6 +60,8 @@ export async function run(args: ParsedArgs): Promise<void> {
 			return taskCancel(args, root);
 		case "children":
 			return taskChildren(args, root);
+		case "retry":
+			return taskRetry(args, root);
 		default:
 			logError(`Unknown task subcommand: ${sub}`);
 			process.exit(1);
@@ -72,14 +75,17 @@ function taskCreate(args: ParsedArgs, root: string): void {
 		process.exit(1);
 	}
 
+	const config = loadConfig(root);
 	const files =
 		typeof args.flags.files === "string"
 			? args.flags.files.split(",").map((f) => f.trim())
-			: [];
+			: config.files || [];
 	const baseBranch =
-		typeof args.flags.base === "string" ? args.flags.base : undefined;
+		typeof args.flags.base === "string" ? args.flags.base : config.baseBranch;
 	const executor =
-		typeof args.flags.executor === "string" ? args.flags.executor : null;
+		typeof args.flags.executor === "string"
+			? args.flags.executor
+			: config.executor || null;
 	const prompt =
 		typeof args.flags.prompt === "string" ? args.flags.prompt : null;
 	const parentName =
@@ -478,6 +484,72 @@ function taskChildren(args: ParsedArgs, root: string): void {
 	log(`Subtasks of "${name}":`);
 	for (const child of children) {
 		console.log(formatTask(child));
+	}
+}
+
+async function taskRetry(args: ParsedArgs, root: string): Promise<void> {
+	const name = args._[2];
+	if (!name) {
+		logError("Missing task name. Usage: ruah task retry <name>");
+		process.exit(1);
+	}
+
+	const state = loadState(root);
+	const task = state.tasks[name];
+	if (!task) {
+		logError(`Task "${name}" not found`);
+		process.exit(1);
+	}
+	if (task.status !== "failed") {
+		logError(`Task "${name}" is ${task.status}, can only retry from "failed"`);
+		process.exit(1);
+	}
+
+	const dryRun = args.flags["dry-run"];
+	const noExec = args.flags["no-exec"];
+
+	// Reset task state — worktree and branch still exist
+	task.status = "in-progress";
+	task.startedAt = new Date().toISOString();
+	task.completedAt = null;
+	addHistoryEntry(state, "task.retried", { task: name });
+	saveState(root, state);
+
+	logSuccess(`Task "${name}" reset to in-progress`);
+
+	if (task.prompt && !noExec) {
+		log(`Re-executing with ${task.executor || "default"}...`);
+
+		const result = await executeTask(task, task.worktree, {
+			dryRun: !!dryRun,
+		});
+
+		if (dryRun) {
+			logInfo(`Would run: ${result.command}`);
+			return;
+		}
+
+		if (result.success) {
+			task.status = "done";
+			task.completedAt = new Date().toISOString();
+			addHistoryEntry(state, "task.done", { task: name });
+			saveState(root, state);
+			logSuccess(`Task "${name}" completed successfully on retry`);
+		} else {
+			task.status = "failed";
+			addHistoryEntry(state, "task.failed", {
+				task: name,
+				error: result.error,
+			});
+			saveState(root, state);
+			logError(
+				`Task "${name}" failed again: ${result.error || `exit code ${result.exitCode}`}`,
+			);
+			process.exit(1);
+		}
+	} else if (!task.prompt) {
+		logInfo("No prompt set — task is ready for manual retry");
+		log(`Worktree: ${task.worktree}`);
 	}
 }
 

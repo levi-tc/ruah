@@ -18,6 +18,7 @@ Usage:
   ruah task <subcommand> [options]
   ruah workflow <subcommand> [options]
   ruah setup [--force]
+  ruah config            Show resolved configuration
   ruah status [--json]
 
 Task subcommands:
@@ -39,6 +40,9 @@ Task subcommands:
   children <name> List subtasks of a task
     --json               Output as JSON
   cancel <name>  Cancel and clean up task (cascades to subtasks)
+  retry <name>   Retry a failed task (re-execute without recreating worktree)
+    --no-exec            Reset status only, don't run executor
+    --dry-run            Show what would be executed
 
 Workflow subcommands:
   run <file.md>  Execute a workflow
@@ -122,6 +126,11 @@ async function main(): Promise<void> {
 			}
 			case "workflow": {
 				const { run } = await import("./commands/workflow.js");
+				await run(args);
+				break;
+			}
+			case "config": {
+				const { run } = await import("./commands/config.js");
 				await run(args);
 				break;
 			}
