@@ -6,6 +6,7 @@ import type { TaskDef } from "../core/executor.js";
 import { executeTask } from "../core/executor.js";
 import {
 	createWorktree,
+	getCurrentBranch,
 	getRepoRoot,
 	mergeWorktree,
 	removeWorktree,
@@ -498,7 +499,8 @@ function workflowCreate(args: ParsedArgs, root: string): void {
 		process.exit(1);
 	}
 
-	const template = generateTemplate(name);
+	const baseBranch = getCurrentBranch(root);
+	const template = generateTemplate(name, baseBranch);
 	writeFileSync(filePath, template, "utf-8");
 
 	logSuccess(`Workflow "${name}" created`);
@@ -507,11 +509,11 @@ function workflowCreate(args: ParsedArgs, root: string): void {
 	logInfo(`  ruah workflow run ${filePath}`);
 }
 
-function generateTemplate(name: string): string {
+function generateTemplate(name: string, baseBranch: string): string {
 	return `# Workflow: ${name}
 
 ## Config
-- base: main
+- base: ${baseBranch}
 - parallel: true
 
 ## Tasks

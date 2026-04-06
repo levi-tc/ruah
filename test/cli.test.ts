@@ -33,7 +33,7 @@ function ruah(args: string, cwd: string): string {
 function tmpGitRepo(): string {
 	const dir = join(tmpdir(), `ruah-cli-${randomBytes(4).toString("hex")}`);
 	mkdirSync(dir, { recursive: true });
-	execSync("git init", { cwd: dir, stdio: "pipe" });
+	execSync("git init -b main", { cwd: dir, stdio: "pipe" });
 	execSync('git config user.email "test@test.com"', {
 		cwd: dir,
 		stdio: "pipe",
@@ -83,7 +83,7 @@ describe("CLI integration", () => {
 
 	it("--version prints version", () => {
 		const out = ruah("--version", repo);
-		assert.ok(out.includes("ruah 0.3.4"));
+		assert.ok(out.includes("ruah 0.3.5"));
 	});
 
 	it("init creates .ruah directory structure", () => {
@@ -374,13 +374,16 @@ describe("CLI integration", () => {
 
 	it("workflow run persists workflow metadata for later takeover", async () => {
 		ruah("init", repo);
+		const baseBranch = JSON.parse(
+			readFileSync(join(repo, ".ruah", "state.json"), "utf-8"),
+		).baseBranch;
 		const workflowPath = join(repo, ".ruah", "workflows", "handoff.md");
 		writeFileSync(
 			workflowPath,
 			`# Workflow: Handoff Test
 
 ## Config
-- base: main
+- base: ${baseBranch}
 - parallel: false
 
 ## Tasks

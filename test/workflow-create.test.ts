@@ -19,11 +19,11 @@ function tmpRoot(): string {
 }
 
 /** Reproduce the template logic so tests don't import the command module (which calls getRepoRoot). */
-function generateTemplate(name: string): string {
+function generateTemplate(name: string, baseBranch = "main"): string {
 	return `# Workflow: ${name}
 
 ## Config
-- base: main
+- base: ${baseBranch}
 - parallel: true
 
 ## Tasks
@@ -80,10 +80,10 @@ describe("workflow create template", () => {
 	});
 
 	it("template contains required sections", () => {
-		const template = generateTemplate("test-workflow");
+		const template = generateTemplate("test-workflow", "develop");
 
 		assert.ok(template.startsWith("# Workflow: test-workflow"));
-		assert.ok(template.includes("- base: main"));
+		assert.ok(template.includes("- base: develop"));
 		assert.ok(template.includes("- parallel: true"));
 		assert.ok(template.includes("- depends: [task-1, task-2]"));
 		assert.ok(template.includes("- executor: claude-code"));
@@ -119,13 +119,13 @@ describe("workflow create template", () => {
 		mkdirSync(dir, { recursive: true });
 
 		const name = "parseable";
-		const template = generateTemplate(name);
+		const template = generateTemplate(name, "trunk");
 		const filePath = join(dir, `${name}.md`);
 		writeFileSync(filePath, template, "utf-8");
 
 		const workflow = parseWorkflow(filePath);
 		assert.equal(workflow.name, "parseable");
-		assert.equal(workflow.config.base, "main");
+		assert.equal(workflow.config.base, "trunk");
 		assert.equal(workflow.config.parallel, true);
 		assert.equal(workflow.tasks.length, 3);
 		assert.equal(workflow.tasks[0].name, "task-1");

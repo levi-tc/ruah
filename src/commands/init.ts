@@ -15,10 +15,11 @@ const GITIGNORE = `worktrees/
 state.json
 `;
 
-const EXAMPLE_WORKFLOW = `# Workflow: example-feature
+function generateExampleWorkflow(baseBranch: string): string {
+	return `# Workflow: example-feature
 
 ## Config
-- base: main
+- base: ${baseBranch}
 - parallel: true
 
 ## Tasks
@@ -47,6 +48,7 @@ const EXAMPLE_WORKFLOW = `# Workflow: example-feature
     Write integration tests for the new feature.
     Cover both API and UI interactions.
 `;
+}
 
 export async function run(args: ParsedArgs): Promise<void> {
 	const force = args.flags.force;
@@ -80,7 +82,7 @@ export async function run(args: ParsedArgs): Promise<void> {
 	// Write example workflow
 	const workflowPath = join(root, ".ruah", "workflows", "example-feature.md");
 	if (!existsSync(workflowPath) || force) {
-		writeFileSync(workflowPath, EXAMPLE_WORKFLOW, "utf-8");
+		writeFileSync(workflowPath, generateExampleWorkflow(branch), "utf-8");
 	}
 
 	logSuccess(`${label()} initialized`);
