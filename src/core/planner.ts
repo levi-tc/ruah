@@ -295,6 +295,24 @@ export function decideStageStrategy(
 	};
 }
 
+// --- Parallel Limit ---
+
+/**
+ * Split a stage of tasks into sub-batches when it exceeds maxParallel.
+ * If the stage fits within the limit, returns it as a single batch.
+ */
+export function splitStageByParallelLimit(
+	stage: WorkflowTask[],
+	maxParallel: number,
+): WorkflowTask[][] {
+	if (stage.length <= maxParallel) return [stage];
+	const batches: WorkflowTask[][] = [];
+	for (let i = 0; i < stage.length; i += maxParallel) {
+		batches.push(stage.slice(i, i + maxParallel));
+	}
+	return batches;
+}
+
 // --- Top-Level Planner ---
 
 /**
@@ -304,7 +322,9 @@ export function decideStageStrategy(
 export function createSmartPlan(
 	stages: WorkflowTask[][],
 	repoRoot: string,
+	maxParallel?: number,
 ): SmartPlan {
+	const limit = maxParallel ?? 5;
 	const allOverlaps: TaskPairOverlap[] = [];
 	const refinedStages: StageDecision[] = [];
 	let parallelCount = 0;
@@ -325,18 +345,45 @@ export function createSmartPlan(
 		const overlaps = analyzeStageOverlaps(stage, repoRoot);
 		allOverlaps.push(...overlaps);
 		const decision = decideStageStrategy(stage, overlaps, repoRoot);
-		refinedStages.push(decision);
 
-		switch (decision.strategy) {
-			case "parallel":
-				parallelCount++;
-				break;
-			case "serial":
-				serialCount++;
-				break;
-			case "parallel-with-contracts":
-				contractCount++;
-				break;
+		// If strategy allows parallelism and tasks exceed the limit, split into sub-batches
+		if (
+			(decision.strategy === "parallel" ||
+				decision.strategy === "parallel-with-contracts") &&
+			decision.tasks.length > limit
+		) {
+			const batches = splitStageByParallelLimit(decision.tasks, limit);
+			const totalBatches = batches.length;
+			for (let idx = 0; idx < batches.length; idx++) {
+				const batchDecision: StageDecision = {
+					strategy: decision.strategy,
+					tasks: batches[idx],
+					contracts: decision.contracts,
+					reason: `batch ${idx + 1}/${totalBatches} (capped at ${limit} parallel)`,
+				};
+				refinedStages.push(batchDecision);
+				switch (decision.strategy) {
+					case "parallel":
+						parallelCount++;
+						break;
+					case "parallel-with-contracts":
+						contractCount++;
+						break;
+				}
+			}
+		} else {
+			refinedStages.push(decision);
+			switch (decision.strategy) {
+				case "parallel":
+					parallelCount++;
+					break;
+				case "serial":
+					serialCount++;
+					break;
+				case "parallel-with-contracts":
+					contractCount++;
+					break;
+			}
 		}
 	}
 
