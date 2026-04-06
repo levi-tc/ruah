@@ -158,10 +158,32 @@ Use `--skip-gates` for emergencies.
 
 Detects `.arhy` contract files for system boundary definitions. Used for inferring file lock boundaries from entity contracts.
 
+### AI Agent Setup
+
+Register ruah with all AI coding agents in your project:
+
+```bash
+ruah setup
+```
+
+This writes integration files for:
+- **Claude Code** — skill in `.claude/skills/ruah-orchestrator/`
+- **Cursor** — rule in `.cursor/rules/ruah.mdc`
+- **Windsurf** — appends to `.windsurfrules`
+- **Cody** — instructions in `.sourcegraph/ruah-instructions.md`
+- **Continue** — rule in `.continue/rules/ruah.md`
+
+After setup, AI agents auto-detect ruah and know how to use it.
+
+### Update Notifications
+
+ruah checks npm for updates once every 24 hours (non-blocking, cached in `~/.ruah/`). When a new version is available, a banner appears after command output. Disable with `RUAH_NO_UPDATE_CHECK=1`.
+
 ## CLI Reference
 
 ```
 ruah init [--force]
+ruah setup [--force]
 ruah task create <name> [--files <globs>] [--base <branch>] [--executor <cmd>] [--prompt <text>] [--parent <task>]
 ruah task start <name> [--no-exec] [--dry-run]
 ruah task done <name>

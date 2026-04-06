@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 
+import {
+	checkForUpdate,
+	formatUpdateBanner,
+} from "./core/update-notifier.js";
 import { label, logError } from "./utils/format.js";
 
 export interface ParsedArgs {
@@ -7,7 +11,7 @@ export interface ParsedArgs {
 	flags: Record<string, string | boolean>;
 }
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 const HELP = `
 ${label()} — multi-agent orchestration
@@ -16,6 +20,7 @@ Usage:
   ruah init [--force]
   ruah task <subcommand> [options]
   ruah workflow <subcommand> [options]
+  ruah setup [--force]
   ruah status [--json]
 
 Task subcommands:
@@ -108,6 +113,11 @@ async function main(): Promise<void> {
 				await run(args);
 				break;
 			}
+			case "setup": {
+				const { run } = await import("./commands/setup.js");
+				await run(args);
+				break;
+			}
 			case "task": {
 				const { run } = await import("./commands/task.js");
 				await run(args);
@@ -135,6 +145,19 @@ async function main(): Promise<void> {
 			console.error(err instanceof Error ? err.stack : err);
 		}
 		process.exit(1);
+	}
+
+	// Non-blocking update check — runs after command completes
+	if (!process.env.RUAH_NO_UPDATE_CHECK) {
+		checkForUpdate(VERSION)
+			.then((info) => {
+				if (info) {
+					console.error(formatUpdateBanner(info));
+				}
+			})
+			.catch(() => {
+				// Silent — never fail on update check
+			});
 	}
 }
 
