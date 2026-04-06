@@ -162,6 +162,9 @@ describe("git", () => {
 		});
 
 		it("handles missing merge base gracefully", () => {
+			// Capture the default branch name before switching to orphan
+			const mainBranch = getCurrentBranch(repo);
+
 			// Create an orphan branch with no common ancestor
 			execSync("git checkout --orphan orphan-branch", {
 				cwd: repo,
@@ -173,7 +176,6 @@ describe("git", () => {
 				stdio: "pipe",
 			});
 
-			const mainBranch = "main";
 			const result = checkMergeConflicts(mainBranch, "orphan-branch", repo);
 			// No common ancestor — should return clean: true
 			assert.equal(result.clean, true);
