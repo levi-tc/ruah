@@ -1,9 +1,6 @@
 #!/usr/bin/env node
 
-import {
-	checkForUpdate,
-	formatUpdateBanner,
-} from "./core/update-notifier.js";
+import { checkForUpdate, formatUpdateBanner } from "./core/update-notifier.js";
 import { label, logError } from "./utils/format.js";
 
 export interface ParsedArgs {

@@ -371,7 +371,7 @@ function taskMerge(args: ParsedArgs, root: string): void {
 	// Merge — subtasks merge from within the parent's worktree
 	const mergeOpts: { parentWorktree?: string } = {};
 	if (isSubtask) {
-		const parentTask = state.tasks[task.parent!];
+		const parentTask = task.parent ? state.tasks[task.parent] : undefined;
 		if (parentTask?.worktree) {
 			mergeOpts.parentWorktree = parentTask.worktree;
 		}
