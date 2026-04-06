@@ -15,6 +15,9 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const CLI = join(__dirname, "..", "src", "cli.js");
+const PACKAGE_VERSION = JSON.parse(
+	readFileSync(join(__dirname, "..", "package.json"), "utf-8"),
+).version as string;
 
 function ruah(args: string, cwd: string): string {
 	try {
@@ -83,7 +86,7 @@ describe("CLI integration", () => {
 
 	it("--version prints version", () => {
 		const out = ruah("--version", repo);
-		assert.ok(out.includes("ruah 0.3.5"));
+		assert.ok(out.includes(`ruah ${PACKAGE_VERSION}`));
 	});
 
 	it("init creates .ruah directory structure", () => {
@@ -146,6 +149,17 @@ describe("CLI integration", () => {
 		assert.equal(typeof parsed.cragDetected, "boolean");
 		assert.ok(parsed.baseBranch);
 		assert.ok(parsed.taskCounts);
+	});
+
+	it("doctor --json reports repo health", () => {
+		ruah("init", repo);
+		const out = ruah("doctor --json", repo);
+		const parsed = JSON.parse(out);
+		assert.equal(parsed.currentBranch, "main");
+		assert.ok(Array.isArray(parsed.checks));
+		assert.ok(
+			parsed.checks.some((check: { name: string }) => check.name === "git"),
+		);
 	});
 
 	it("task cancel cleans up worktree and locks", () => {

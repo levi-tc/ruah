@@ -156,4 +156,10 @@ describe("config", () => {
 		const config = loadConfig(root);
 		assert.equal(config.maxParallel, 3);
 	});
+
+	it("loads strictLocks from config", () => {
+		writeFileSync(join(root, ".ruahrc"), JSON.stringify({ strictLocks: true }));
+		const config = loadConfig(root);
+		assert.equal(config.strictLocks, true);
+	});
 });

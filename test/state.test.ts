@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { execSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -56,6 +57,18 @@ describe("state", () => {
 		const loaded = loadState(root);
 		assert.equal(loaded.baseBranch, "develop");
 		assert.equal(loaded.tasks.foo.name, "foo");
+		assert.equal(loaded.revision, 1);
+	});
+
+	it("saveState rejects stale writes", () => {
+		const first = loadState(root);
+		const stale = loadState(root);
+
+		first.baseBranch = "develop";
+		saveState(root, first);
+
+		stale.baseBranch = "feature";
+		assert.throws(() => saveState(root, stale), /state changed on disk/i);
 	});
 
 	it("ensureStateDir creates .ruah directory structure", () => {
@@ -86,15 +99,31 @@ describe("state", () => {
 });
 
 describe("file locks", () => {
+	let root: string;
+
+	beforeEach(() => {
+		root = tmpRoot();
+	});
+
+	afterEach(() => {
+		rmSync(root, { recursive: true, force: true });
+	});
+
 	it("acquireLocks succeeds with no conflicts", () => {
-		const state = { locks: {} } as unknown as RuahState;
+		const state = {
+			locks: {},
+			lockSnapshots: {},
+		} as unknown as RuahState;
 		const result = acquireLocks(state, "auth", ["src/auth/**"]);
 		assert.ok(result.success);
 		assert.deepEqual(state.locks.auth, ["src/auth/**"]);
 	});
 
 	it("acquireLocks detects overlapping patterns", () => {
-		const state = { locks: { auth: ["src/auth/**"] } } as unknown as RuahState;
+		const state = {
+			locks: { auth: ["src/auth/**"] },
+			lockSnapshots: {},
+		} as unknown as RuahState;
 		const result = acquireLocks(state, "api", ["src/auth/**"]);
 		assert.ok(!result.success);
 		assert.equal(result.conflicts.length, 1);
@@ -102,13 +131,19 @@ describe("file locks", () => {
 	});
 
 	it("acquireLocks allows non-overlapping patterns", () => {
-		const state = { locks: { auth: ["src/auth/**"] } } as unknown as RuahState;
+		const state = {
+			locks: { auth: ["src/auth/**"] },
+			lockSnapshots: {},
+		} as unknown as RuahState;
 		const result = acquireLocks(state, "api", ["src/api/**"]);
 		assert.ok(result.success);
 	});
 
 	it("acquireLocks succeeds with empty patterns", () => {
-		const state = { locks: { auth: ["src/auth/**"] } } as unknown as RuahState;
+		const state = {
+			locks: { auth: ["src/auth/**"] },
+			lockSnapshots: {},
+		} as unknown as RuahState;
 		const result = acquireLocks(state, "api", []);
 		assert.ok(result.success);
 	});
@@ -121,9 +156,49 @@ describe("file locks", () => {
 		assert.ok(!state.locks.auth);
 		assert.ok(state.locks.api);
 	});
+
+	it("strict locks reject unresolved glob patterns", () => {
+		const state = {
+			locks: {},
+			lockSnapshots: {},
+		} as unknown as RuahState;
+		const result = acquireLocks(
+			state,
+			"auth",
+			["src/auth/**"],
+			null,
+			root,
+			true,
+		);
+		assert.equal(result.success, false);
+		assert.equal(result.ambiguous, true);
+	});
+
+	it("stores resolved lock snapshots", () => {
+		execSync("git init -b main", { cwd: root, stdio: "pipe" });
+		writeFileSync(join(root, "auth.ts"), "export const a = 1;\n", "utf-8");
+
+		const state = {
+			locks: {},
+			lockSnapshots: {},
+		} as unknown as RuahState;
+		const result = acquireLocks(state, "auth", ["*.ts"], null, root);
+		assert.equal(result.success, true);
+		assert.deepEqual(state.lockSnapshots.auth["*.ts"], ["auth.ts"]);
+	});
 });
 
 describe("patternsOverlap", () => {
+	let root: string;
+
+	beforeEach(() => {
+		root = tmpRoot();
+	});
+
+	afterEach(() => {
+		rmSync(root, { recursive: true, force: true });
+	});
+
 	it("exact match", () => {
 		assert.ok(patternsOverlap("src/auth/**", "src/auth/**"));
 	});
@@ -147,6 +222,14 @@ describe("patternsOverlap", () => {
 
 	it("same string", () => {
 		assert.ok(patternsOverlap("src/file.js", "src/file.js"));
+	});
+
+	it("uses repo files to reject disjoint glob patterns in the same directory", () => {
+		execSync("git init -b main", { cwd: root, stdio: "pipe" });
+		writeFileSync(join(root, "login.ts"), "export const a = 1;\n", "utf-8");
+		writeFileSync(join(root, "login.js"), "module.exports = 1;\n", "utf-8");
+
+		assert.equal(patternsOverlap("*.ts", "*.js", root), false);
 	});
 });
 

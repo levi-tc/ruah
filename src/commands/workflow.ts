@@ -2,6 +2,10 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ParsedArgs } from "../cli.js";
 import { loadConfig } from "../core/config.js";
+import {
+	formatContractViolationReport,
+	validateContractChanges,
+} from "../core/contract-validator.js";
 import type { TaskDef } from "../core/executor.js";
 import { executeTask } from "../core/executor.js";
 import {
@@ -55,6 +59,8 @@ export async function run(args: ParsedArgs): Promise<void> {
 	switch (sub) {
 		case "run":
 			return workflowRun(args, root);
+		case "explain":
+			return workflowExplain(args, root);
 		case "plan":
 			return workflowPlan(args, root);
 		case "list":
@@ -103,6 +109,8 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 	const config = loadConfig(root);
 	const baseBranch =
 		workflow.config.base || config.baseBranch || state.baseBranch;
+	const strictLocks =
+		args.flags["strict-locks"] === true || config.strictLocks === true;
 
 	if (json && dryRun) {
 		console.log(
@@ -181,8 +189,24 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 			const stageTasks: StageTask[] = [];
 			for (const taskDef of substage) {
 				if (taskDef.files.length > 0) {
-					const lockResult = acquireLocks(state, taskDef.name, taskDef.files);
+					const lockResult = acquireLocks(
+						state,
+						taskDef.name,
+						taskDef.files,
+						undefined,
+						root,
+						strictLocks,
+					);
 					if (!lockResult.success) {
+						if (lockResult.ambiguous) {
+							logError(
+								`Strict lock validation failed for "${taskDef.name}": ${lockResult.conflicts.map((c) => c.requested).join(", ")}`,
+							);
+							logInfo(
+								"Use concrete file globs or disable strict locks for exploratory tasks.",
+							);
+							process.exit(1);
+						}
 						logError(
 							`Lock conflict for "${taskDef.name}": ${lockResult.conflicts.map((c) => c.pattern).join(", ")}`,
 						);
@@ -229,16 +253,30 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 					logInfo(`  Running: ${def.name} (${def.executor || "script"})`);
 
 					// Inject contract from smart planner
+					const contract = decision?.contracts?.get(def.name) ?? null;
 					const taskDefWithContract: TaskDef = {
 						...def,
-						contract: decision?.contracts?.get(def.name) ?? null,
+						contract,
 					};
 
 					const result = await executeTask(taskDefWithContract, worktreePath, {
 						silent: true,
 					});
 
-					if (result.success) {
+					let contractValidation = null;
+					if (result.success && contract) {
+						contractValidation = validateContractChanges(
+							contract,
+							worktreePath,
+							root,
+							baseBranch,
+						);
+					}
+
+					if (
+						result.success &&
+						(!contractValidation || contractValidation.valid)
+					) {
 						state.tasks[def.name].status = "done";
 						state.tasks[def.name].completedAt = new Date().toISOString();
 						addHistoryEntry(state, "task.done", { task: def.name });
@@ -247,10 +285,20 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 						state.tasks[def.name].status = "failed";
 						addHistoryEntry(state, "task.failed", {
 							task: def.name,
+							reason: contractValidation ? "contract-violation" : "executor",
 						});
-						logError(
-							`  ${def.name}: failed — ${result.error || `exit ${result.exitCode}`}`,
-						);
+						if (contractValidation && !contractValidation.valid) {
+							logError(`  ${def.name}: contract violation`);
+							for (const line of formatContractViolationReport(
+								contractValidation,
+							)) {
+								logWarn(`    ${line}`);
+							}
+						} else {
+							logError(
+								`  ${def.name}: failed — ${result.error || `exit ${result.exitCode}`}`,
+							);
+						}
 					}
 
 					saveState(root, state);
@@ -291,6 +339,9 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 					}
 					if (failedTaskNames.has(def.name)) {
 						logWarn(`  Preserved failed task for takeover: ${def.name}`);
+						logInfo(
+							`    Next: ruah task takeover ${def.name} --executor ${task.executor || "<cmd>"}`,
+						);
 						continue;
 					}
 					if (task) {
@@ -358,6 +409,61 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 
 	if (json) {
 		console.log(JSON.stringify({ workflow: workflow.name, results }, null, 2));
+	}
+}
+
+function workflowExplain(args: ParsedArgs, root: string): void {
+	const ref = args._[2];
+	if (!ref) {
+		logError(
+			"Missing workflow reference. Usage: ruah workflow explain <name|file.md>",
+		);
+		process.exit(1);
+	}
+
+	const resolvedRef = resolve(ref);
+	const state = loadState(root);
+	const tasks = Object.values(state.tasks)
+		.filter((task) => task.workflow)
+		.filter(
+			(task) =>
+				task.workflow?.name === ref || task.workflow?.path === resolvedRef,
+		)
+		.sort((a, b) => {
+			const stageDiff = (a.workflow?.stage || 0) - (b.workflow?.stage || 0);
+			return stageDiff !== 0 ? stageDiff : a.name.localeCompare(b.name);
+		});
+
+	if (tasks.length === 0) {
+		logError(`No workflow state found for "${ref}"`);
+		process.exit(1);
+	}
+
+	const workflow = tasks[0].workflow;
+	log(`Workflow: ${heading(workflow?.name || ref)}`);
+	if (workflow?.path) {
+		logInfo(`Path: ${workflow.path}`);
+	}
+
+	const blocking = tasks.filter(
+		(task) =>
+			task.status === "failed" ||
+			task.status === "created" ||
+			task.status === "in-progress",
+	);
+	logInfo(`Blocking tasks: ${blocking.length}`);
+
+	for (const task of tasks) {
+		logInfo(`  Stage ${task.workflow?.stage}: ${task.name} (${task.status})`);
+		if (task.status === "failed") {
+			logInfo(
+				`    Next: ruah task takeover ${task.name} --executor ${task.executor || "<cmd>"}`,
+			);
+		} else if (task.status === "created" || task.status === "in-progress") {
+			logInfo(`    Next: ruah task start ${task.name}`);
+		} else if (task.status === "done") {
+			logInfo(`    Next: ruah task merge ${task.name}`);
+		}
 	}
 }
 

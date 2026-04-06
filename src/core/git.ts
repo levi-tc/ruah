@@ -44,6 +44,10 @@ function git(cmd: string, opts: GitOptions = {}): string {
 	}
 }
 
+function shQuote(value: string): string {
+	return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 export function isGitRepo(cwd?: string): boolean {
 	try {
 		execSync("git rev-parse --is-inside-work-tree", {
@@ -217,6 +221,19 @@ export function listWorktrees(repoRoot: string): WorktreeEntry[] {
 	return worktrees.filter((w) => w.branch?.includes("ruah/"));
 }
 
+export function listRepoFiles(repoRoot: string): string[] {
+	try {
+		const raw = git("ls-files -z --cached --others --exclude-standard", {
+			cwd: repoRoot,
+			silent: true,
+		});
+		if (!raw) return [];
+		return raw.split("\0").filter(Boolean);
+	} catch {
+		return [];
+	}
+}
+
 export function hasUncommittedChanges(cwd?: string): boolean {
 	const status = git("status --porcelain", { cwd, silent: true });
 	return status.length > 0;
@@ -240,6 +257,58 @@ export function autoCommitChanges(taskName: string, cwd: string): boolean {
 		silent: true,
 	});
 	return true;
+}
+
+export function listChangedFilesAgainstBase(
+	baseRef: string,
+	cwd: string,
+): string[] {
+	const raw = git(`diff --name-only ${baseRef} --`, {
+		cwd,
+		silent: true,
+	});
+	const changed = raw
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean);
+
+	const statusRaw = git("status --porcelain --untracked-files=all", {
+		cwd,
+		silent: true,
+	});
+	const statusFiles = statusRaw
+		.split("\n")
+		.filter((line) => line.trim().length > 0)
+		.map((line) => line.slice(2).trimStart())
+		.map((line) => line.split(" -> ").at(-1) || line);
+
+	return [...new Set([...changed, ...statusFiles])];
+}
+
+export function getDiffPatchAgainstBase(
+	baseRef: string,
+	filePath: string,
+	cwd: string,
+): string {
+	return git(`diff --unified=0 ${baseRef} -- ${shQuote(filePath)}`, {
+		cwd,
+		silent: true,
+	});
+}
+
+export function readFileAtRef(
+	ref: string,
+	filePath: string,
+	repoRoot: string,
+): string | null {
+	try {
+		return git(`show ${ref}:${shQuote(filePath)}`, {
+			cwd: repoRoot,
+			silent: true,
+		});
+	} catch {
+		return null;
+	}
 }
 
 export interface ConflictCheck {

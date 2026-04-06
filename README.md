@@ -1,12 +1,12 @@
 # ruah
 
-**Stop AI agents from stepping on each other.**
+**Multiple agents, one repo, no stepping on each other.**
 
-When multiple AI agents work on the same repo, their edits collide. ruah gives each agent its own git worktree, locks the files it's touching, and merges everything back in dependency order.
+When multiple AI agents work on the same repo, their edits collide. ruah gives each agent its own git worktree, checks the files it's touching, and merges everything back in dependency order.
 
 ```
   agent 1 ──→ worktree A ──→ src/auth/**  🔒
-  agent 2 ──→ worktree B ──→ src/ui/**    🔒  ← no conflicts, ever
+  agent 2 ──→ worktree B ──→ src/ui/**    🔒  ← conflicts blocked early
   agent 3 ──→ worktree C ──→ tests/**     🔒
 ```
 
@@ -34,7 +34,7 @@ npx @levi-tc/ruah init
 ruah task create auth --files "src/auth/**" --executor claude-code --prompt "Add authentication"
 ruah task create ui   --files "src/ui/**"   --executor aider       --prompt "Build dashboard"
 
-# Both run in parallel — separate worktrees, no conflicts
+# Both run in parallel — separate worktrees, isolated edit scopes
 ruah task start auth
 ruah task start ui
 
@@ -48,6 +48,29 @@ Or define a full workflow as a DAG:
 ```bash
 ruah workflow run .ruah/workflows/feature.md
 ```
+
+## Why Not Just Branches?
+
+Branches isolate history. They do not coordinate concurrent agent execution inside one repo.
+
+- ruah gives each task its own worktree, so agents do not share a checkout
+- ruah rejects overlapping lock scopes before agents start
+- ruah can validate contract violations before merge instead of discovering them at the end
+
+## Guarantees / Non-Guarantees
+
+ruah currently guarantees:
+
+- worktree isolation per task
+- process-safe state writes with stale-write rejection
+- lock conflict checks at task creation, resolved against repo files when available
+- contract enforcement for read-only and shared-append workflow stages
+
+ruah does not yet guarantee:
+
+- semantic conflict freedom inside arbitrary overlapping code
+- perfect prediction for brand-new files that do not exist when locks are taken
+- automatic workflow recovery for every interrupted executor without operator input
 
 ## How It Works
 
@@ -64,7 +87,7 @@ created → in-progress → done → merged
 
 ### 2. File Locks
 
-Advisory locks checked at task creation. Overlapping patterns are rejected before any agent starts:
+Lock scopes are checked at task creation. Overlapping patterns are rejected before any agent starts, using repo files when available:
 
 ```bash
 ruah task create auth  --files "src/auth/**"   # ✓ locked
@@ -107,7 +130,18 @@ Markdown files define task graphs. Independent tasks run in parallel, dependent 
     Write integration tests.
 ```
 
-The DAG is validated (cycle detection, missing refs) before execution. When `parallel: true` is set, ruah's smart planner analyzes file overlaps and decides per-stage: full parallel, parallel with modification contracts, or serial.
+The DAG is validated (cycle detection, missing refs) before execution. When `parallel: true` is set, ruah's smart planner analyzes file overlaps and decides per-stage: full parallel, parallel with modification contracts, or serial. Contracted stages are validated after execution so read-only changes and non-append edits fail before merge.
+
+### Recovery Example
+
+When a workflow stops on a failed task:
+
+```bash
+ruah workflow explain .ruah/workflows/feature.md
+ruah task takeover backend --executor codex
+```
+
+`workflow explain` shows the blocking task and the exact next command to run.
 
 ### 4. Subagent Spawning
 
@@ -125,7 +159,7 @@ Parent merge is blocked until all children are merged or cancelled. Each agent r
 
 ### 5. Executor Adapters
 
-Built-in support for common AI agents. Unknown names are run as shell commands.
+Built-in support for common AI agents.
 
 | Executor | Agent |
 |----------|-------|

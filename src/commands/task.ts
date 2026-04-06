@@ -112,6 +112,10 @@ async function executeTaskLifecycle(
 			logError(
 				`${options.failurePrefix}: ${result.error || `exit code ${result.exitCode}`}`,
 			);
+			logInfo(`Retry: ruah task retry ${task.name}`);
+			logInfo(
+				`Take over: ruah task takeover ${task.name} --executor ${task.executor || "<cmd>"}`,
+			);
 			process.exit(1);
 		}
 	} else if (!task.prompt) {
@@ -144,6 +148,8 @@ function taskCreate(args: ParsedArgs, root: string): void {
 		typeof args.flags.parent === "string"
 			? args.flags.parent
 			: process.env.RUAH_PARENT_TASK || null;
+	const strictLocks =
+		args.flags["strict-locks"] === true || config.strictLocks === true;
 
 	const state = loadState(root);
 
@@ -177,9 +183,18 @@ function taskCreate(args: ParsedArgs, root: string): void {
 
 	// Check file locks (subtask locks validated against parent scope)
 	if (files.length > 0) {
-		const lockResult = acquireLocks(state, name, files, parentName);
+		const lockResult = acquireLocks(
+			state,
+			name,
+			files,
+			parentName,
+			root,
+			strictLocks,
+		);
 		if (!lockResult.success) {
-			if (lockResult.outOfScope) {
+			if (lockResult.ambiguous) {
+				logError("Strict lock validation failed:");
+			} else if (lockResult.outOfScope) {
 				logError("Subtask file locks outside parent scope:");
 			} else {
 				logError("File lock conflict:");

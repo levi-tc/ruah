@@ -2,13 +2,12 @@
 
 import { checkForUpdate, formatUpdateBanner } from "./core/update-notifier.js";
 import { label, logError } from "./utils/format.js";
+import { VERSION } from "./version.js";
 
 export interface ParsedArgs {
 	_: string[];
 	flags: Record<string, string | boolean>;
 }
-
-const VERSION = "0.3.5";
 
 const HELP = `
 ${label()} — multi-agent orchestration
@@ -20,12 +19,14 @@ Usage:
   ruah setup [--force]
   ruah clean [--dry-run] [--force]  Clean stale tasks and orphaned locks
   ruah config            Show resolved configuration
+  ruah doctor [--json]   Validate git, ruah state, locks, and executors
   ruah status [--json]
   ruah demo [--fast]     Interactive demo — see ruah in action
 
 Task subcommands:
   create <name>  Create a task with isolated worktree
     --files <globs>      File patterns to lock (comma-separated)
+    --strict-locks       Reject globs that do not resolve to repo files
     --base <branch>      Base branch (default: from state)
     --executor <cmd>     Agent executor (claude-code|aider|codex|open-code|script)
     --prompt <text>      Prompt for the agent
@@ -53,8 +54,10 @@ Task subcommands:
 
 Workflow subcommands:
   run <file.md>  Execute a workflow
+    --strict-locks       Reject ambiguous lock globs before task creation
     --dry-run            Show plan without executing
     --json               Output as JSON
+  explain <name|file> Show why a workflow stopped and what to run next
   plan <file.md> Show execution plan
     --json               Output as JSON
   list           List available workflows
@@ -151,6 +154,11 @@ async function main(): Promise<void> {
 			}
 			case "config": {
 				const { run } = await import("./commands/config.js");
+				await run(args);
+				break;
+			}
+			case "doctor": {
+				const { run } = await import("./commands/doctor.js");
 				await run(args);
 				break;
 			}

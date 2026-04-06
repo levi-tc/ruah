@@ -16,6 +16,8 @@ export interface RuahConfig {
 	parallel?: boolean;
 	/** Maximum number of tasks to run in parallel per stage (default: 5) */
 	maxParallel?: number;
+	/** Reject lock globs that cannot be resolved to concrete repo files */
+	strictLocks?: boolean;
 }
 
 const EMPTY_CONFIG: RuahConfig = {};
@@ -72,6 +74,8 @@ function validateConfig(raw: unknown): RuahConfig {
 	if (typeof obj.parallel === "boolean") config.parallel = obj.parallel;
 	if (typeof obj.maxParallel === "number" && obj.maxParallel > 0)
 		config.maxParallel = Math.floor(obj.maxParallel);
+	if (typeof obj.strictLocks === "boolean")
+		config.strictLocks = obj.strictLocks;
 
 	return config;
 }

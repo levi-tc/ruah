@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-04-06
+
+### Added
+- **Contract enforcement** — workflow tasks running with modification contracts are now validated after execution, with read-only edits, out-of-contract changes, and non-append shared-file edits blocked before merge.
+- **Concurrency-safe state writes** — `.ruah/state.json` now uses a process lock, stale-lock recovery, and optimistic revision checks so concurrent commands fail cleanly instead of silently overwriting state.
+- **Version parity test** — CLI version output is now checked against package metadata so release drift is caught in tests.
+
+### Changed
+- **CLI version source of truth** — `ruah --version` and update checks now read directly from package metadata instead of a hardcoded string.
+- **Lock overlap detection** — task and planner overlap checks now resolve against repo files when available, falling back only when the repo cannot provide concrete matches.
+- **README guarantees** — absolute conflict language was softened to match the current enforcement model.
+
 ## [0.3.0] - 2026-04-06
 
 ### Added

@@ -8,6 +8,7 @@ import { renderContractMarkdown } from "./planner.js";
 interface AdapterResult {
 	command: string;
 	args: string[];
+	shell?: boolean;
 }
 
 export interface TaskDef {
@@ -33,6 +34,53 @@ export interface ExecuteResult {
 	error?: string | null;
 	command?: string;
 	dryRun?: boolean;
+	autoCommitted?: boolean;
+}
+
+function parseCommandLine(input: string): string[] {
+	const parts: string[] = [];
+	let current = "";
+	let quote: "'" | '"' | null = null;
+	let escaping = false;
+
+	for (const char of input) {
+		if (escaping) {
+			current += char;
+			escaping = false;
+			continue;
+		}
+		if (char === "\\") {
+			escaping = true;
+			continue;
+		}
+		if (quote) {
+			if (char === quote) {
+				quote = null;
+			} else {
+				current += char;
+			}
+			continue;
+		}
+		if (char === "'" || char === '"') {
+			quote = char;
+			continue;
+		}
+		if (/\s/.test(char)) {
+			if (current.length > 0) {
+				parts.push(current);
+				current = "";
+			}
+			continue;
+		}
+		current += char;
+	}
+
+	if (escaping) current += "\\";
+	if (quote) {
+		throw new Error(`Unterminated ${quote} quote in script command`);
+	}
+	if (current.length > 0) parts.push(current);
+	return parts;
 }
 
 function generateMcpScript(prompt: string, mcpUrl: string): string {
@@ -125,8 +173,16 @@ const ADAPTERS: Record<
 		command: "opencode",
 		args: ["-p", prompt],
 	}),
+	raw: (prompt) => ({
+		command: process.platform === "win32" ? "cmd" : "sh",
+		args: process.platform === "win32" ? ["/d", "/s", "/c", prompt] : ["-lc", prompt],
+		shell: false,
+	}),
 	script: (prompt) => {
-		const parts = prompt.split(/\s+/);
+		const parts = parseCommandLine(prompt);
+		if (parts.length === 0) {
+			throw new Error("Script executor requires a non-empty command line");
+		}
 		return {
 			command: parts[0],
 			args: parts.slice(1),
@@ -151,16 +207,28 @@ export function executeTask(
 	const adapter = ADAPTERS[executorName];
 	let cmd: string;
 	let args: string[];
+	let useShell = process.platform === "win32";
 
 	if (adapter) {
-		const resolved = adapter(prompt, taskDef.name);
+		let resolved: AdapterResult;
+		try {
+			resolved = adapter(prompt, taskDef.name);
+		} catch (err: unknown) {
+			return Promise.resolve({
+				success: false,
+				exitCode: null,
+				error: err instanceof Error ? err.message : String(err),
+			});
+		}
 		cmd = resolved.command;
 		args = resolved.args;
+		useShell = resolved.shell ?? process.platform === "win32";
 	} else {
-		// Unknown executor: treat as raw command
-		const parts = executorName.split(/\s+/);
-		cmd = parts[0];
-		args = [...parts.slice(1), prompt].filter(Boolean);
+		return Promise.resolve({
+			success: false,
+			exitCode: null,
+			error: `Unknown executor: ${executorName}. Use a supported executor, "script", or explicit "raw".`,
+		});
 	}
 
 	// Write task file with context and subagent instructions
@@ -238,7 +306,7 @@ Environment variables available:
 			cwd: worktreePath,
 			env: taskEnv,
 			stdio: silent ? "pipe" : "inherit",
-			shell: process.platform === "win32",
+			shell: useShell,
 		});
 
 		let stdout = "";
@@ -257,8 +325,9 @@ Environment variables available:
 
 		child.on("error", (err) => {
 			// Try to salvage any work done before the error
+			let autoCommitted = false;
 			try {
-				autoCommitChanges(taskDef.name, worktreePath);
+				autoCommitted = autoCommitChanges(taskDef.name, worktreePath);
 			} catch {
 				// Non-fatal
 			}
@@ -269,14 +338,16 @@ Environment variables available:
 				stdout,
 				stderr,
 				error: err.message,
+				autoCommitted,
 			});
 		});
 
 		child.on("close", (code) => {
 			// Safety net: auto-commit any uncommitted changes left by the executor.
 			// This prevents lost work when agents forget to commit or crash mid-task.
+			let autoCommitted = false;
 			try {
-				const autoCommitted = autoCommitChanges(taskDef.name, worktreePath);
+				autoCommitted = autoCommitChanges(taskDef.name, worktreePath);
 				if (autoCommitted) {
 					stderr += "\n[ruah] Auto-committed uncommitted changes\n";
 				}
@@ -290,6 +361,7 @@ Environment variables available:
 				stdout,
 				stderr,
 				error: code !== 0 ? `Process exited with code ${code}` : null,
+				autoCommitted,
 			});
 		});
 	});

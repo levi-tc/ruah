@@ -1,13 +1,18 @@
 import { randomBytes } from "node:crypto";
 import {
+	closeSync,
 	existsSync,
 	mkdirSync,
+	openSync,
 	readFileSync,
 	renameSync,
+	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TaskStatus } from "../utils/format.js";
+import { listRepoFiles } from "./git.js";
 
 export interface WorkflowRef {
 	name: string;
@@ -43,9 +48,11 @@ export interface HistoryEntry {
 
 export interface RuahState {
 	version: number;
+	revision: number;
 	baseBranch: string;
 	tasks: Record<string, Task>;
 	locks: Record<string, string[]>;
+	lockSnapshots: Record<string, Record<string, string[]>>;
 	history: HistoryEntry[];
 }
 
@@ -59,16 +66,22 @@ export interface LockResult {
 	success: boolean;
 	conflicts: LockConflict[];
 	outOfScope?: boolean;
+	ambiguous?: boolean;
 }
 
 const MAX_HISTORY = 200;
+const STATE_LOCK_STALE_MS = 30_000;
+const STATE_LOCK_TIMEOUT_MS = 5_000;
+const STATE_LOCK_POLL_MS = 50;
 
 function defaultState(): RuahState {
 	return {
 		version: 1,
+		revision: 0,
 		baseBranch: "main",
 		tasks: {},
 		locks: {},
+		lockSnapshots: {},
 		history: [],
 	};
 }
@@ -85,21 +98,108 @@ export function statePath(root: string): string {
 	return join(root, ".ruah", "state.json");
 }
 
+export function stateLockPath(root: string): string {
+	return join(root, ".ruah", "state.lock");
+}
+
+function sleep(ms: number): void {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function parseState(raw: string): RuahState {
+	const parsed = JSON.parse(raw) as Partial<RuahState>;
+	return {
+		...defaultState(),
+		...parsed,
+		revision: typeof parsed.revision === "number" ? parsed.revision : 0,
+		tasks: parsed.tasks || {},
+		locks: parsed.locks || {},
+		lockSnapshots: parsed.lockSnapshots || {},
+		history: parsed.history || [],
+	};
+}
+
+function acquireStateWriteLock(root: string): () => void {
+	const lockFile = stateLockPath(root);
+	mkdirSync(dirname(lockFile), { recursive: true });
+	const deadline = Date.now() + STATE_LOCK_TIMEOUT_MS;
+
+	while (true) {
+		try {
+			const fd = openSync(lockFile, "wx");
+			writeFileSync(
+				fd,
+				JSON.stringify({
+					pid: process.pid,
+					acquiredAt: new Date().toISOString(),
+				}),
+				"utf-8",
+			);
+			closeSync(fd);
+			return () => {
+				rmSync(lockFile, { force: true });
+			};
+		} catch (err: unknown) {
+			const code = (err as NodeJS.ErrnoException)?.code;
+			if (code !== "EEXIST") {
+				throw err;
+			}
+
+			try {
+				const age = Date.now() - statSync(lockFile).mtimeMs;
+				if (age > STATE_LOCK_STALE_MS) {
+					rmSync(lockFile, { force: true });
+					continue;
+				}
+			} catch {
+				continue;
+			}
+
+			if (Date.now() >= deadline) {
+				throw new Error(
+					"State is locked by another ruah process. Wait for it to finish and retry.",
+				);
+			}
+			sleep(STATE_LOCK_POLL_MS);
+		}
+	}
+}
+
 export function loadState(root: string): RuahState {
 	const file = statePath(root);
 	if (!existsSync(file)) {
 		return defaultState();
 	}
 	const raw = readFileSync(file, "utf-8");
-	return JSON.parse(raw) as RuahState;
+	return parseState(raw);
 }
 
 export function saveState(root: string, state: RuahState): void {
 	const file = statePath(root);
 	mkdirSync(dirname(file), { recursive: true });
-	const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`;
-	writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
-	renameSync(tmp, file);
+	const releaseLock = acquireStateWriteLock(root);
+
+	try {
+		const current = existsSync(file)
+			? parseState(readFileSync(file, "utf-8"))
+			: defaultState();
+		if (state.revision !== current.revision) {
+			throw new Error(
+				"State changed on disk while this command was running. Re-run the command.",
+			);
+		}
+
+		const nextState: RuahState = {
+			...state,
+			revision: current.revision + 1,
+		};
+		const tmp = `${file}.${randomBytes(4).toString("hex")}.tmp`;
+		writeFileSync(tmp, `${JSON.stringify(nextState, null, 2)}\n`, "utf-8");
+		renameSync(tmp, file);
+		state.revision = nextState.revision;
+	} finally {
+		releaseLock();
+	}
 }
 
 export function addHistoryEntry(
@@ -122,9 +222,30 @@ export function acquireLocks(
 	taskName: string,
 	filePatterns: string[],
 	parentName?: string | null,
+	repoRoot?: string,
+	strict?: boolean,
 ): LockResult {
 	if (!filePatterns || filePatterns.length === 0) {
 		return { success: true, conflicts: [] };
+	}
+
+	if (strict && repoRoot) {
+		const ambiguousPatterns = filePatterns.filter(
+			(pattern) =>
+				hasGlobSyntax(pattern) &&
+				resolvePatternMatches(pattern, repoRoot).length === 0,
+		);
+		if (ambiguousPatterns.length > 0) {
+			return {
+				success: false,
+				conflicts: ambiguousPatterns.map((pattern) => ({
+					task: taskName,
+					pattern: "strict lock validation",
+					requested: pattern,
+				})),
+				ambiguous: true,
+			};
+		}
 	}
 
 	// If this is a subtask, validate locks are within parent's scope
@@ -134,7 +255,7 @@ export function acquireLocks(
 			const outOfScope: string[] = [];
 			for (const requested of filePatterns) {
 				const withinParent = parentLocks.some((pl) =>
-					patternsOverlap(pl, requested),
+					patternsOverlap(pl, requested, repoRoot),
 				);
 				if (!withinParent) {
 					outOfScope.push(requested);
@@ -162,7 +283,7 @@ export function acquireLocks(
 		// Sibling subtasks can conflict with each other
 		for (const existing of owned) {
 			for (const requested of filePatterns) {
-				if (patternsOverlap(existing, requested)) {
+				if (patternsOverlap(existing, requested, repoRoot)) {
 					conflicts.push({ task: owner, pattern: existing, requested });
 				}
 			}
@@ -174,6 +295,14 @@ export function acquireLocks(
 	}
 
 	state.locks[taskName] = filePatterns;
+	if (repoRoot) {
+		state.lockSnapshots[taskName] = Object.fromEntries(
+			filePatterns.map((pattern) => [
+				pattern,
+				resolvePatternMatches(pattern, repoRoot),
+			]),
+		);
+	}
 	return { success: true, conflicts: [] };
 }
 
@@ -204,6 +333,9 @@ export function getTaskLineage(state: RuahState, taskName: string): string[] {
 
 export function releaseLocks(state: RuahState, taskName: string): void {
 	delete state.locks[taskName];
+	if (state.lockSnapshots) {
+		delete state.lockSnapshots[taskName];
+	}
 }
 
 export function removeTask(state: RuahState, taskName: string): void {
@@ -218,56 +350,111 @@ export function removeTask(state: RuahState, taskName: string): void {
 	delete state.tasks[taskName];
 }
 
-export function patternsOverlap(a: string, b: string): boolean {
+function normalizePattern(value: string): string {
+	return value.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function escapeRegex(value: string): string {
+	return value.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
+}
+
+function hasGlobSyntax(value: string): boolean {
+	return /[*?[\]{}]/.test(value);
+}
+
+function globToRegExp(pattern: string): RegExp {
+	let source = "^";
+	for (let i = 0; i < pattern.length; i++) {
+		const char = pattern[i];
+		if (char === "*") {
+			if (pattern[i + 1] === "*") {
+				source += ".*";
+				i++;
+			} else {
+				source += "[^/]*";
+			}
+			continue;
+		}
+		if (char === "?") {
+			source += "[^/]";
+			continue;
+		}
+		source += escapeRegex(char);
+	}
+	source += "$";
+	return new RegExp(source);
+}
+
+function globPrefix(pattern: string): string {
+	const match = pattern.match(/^[^*?[\]{}]*/);
+	return (match?.[0] || "").replace(/\/+$/, "");
+}
+
+function filesIntersect(a: string[], b: string[]): boolean {
+	if (a.length === 0 || b.length === 0) return false;
+	const files = new Set(a);
+	return b.some((file) => files.has(file));
+}
+
+function resolvePatternMatches(pattern: string, repoRoot?: string): string[] {
+	if (!repoRoot) return [];
+	const files = listRepoFiles(repoRoot);
+	if (files.length === 0) return [];
+	return files.filter((file) => matchesPattern(pattern, file));
+}
+
+export function matchesPattern(pattern: string, path: string): boolean {
+	const normalizedPattern = normalizePattern(pattern);
+	const normalizedPath = normalizePattern(path);
+
+	if (!hasGlobSyntax(normalizedPattern)) {
+		return (
+			normalizedPattern === normalizedPath ||
+			normalizedPath.startsWith(`${normalizedPattern}/`)
+		);
+	}
+
+	return globToRegExp(normalizedPattern).test(normalizedPath);
+}
+
+export function patternsOverlap(
+	a: string,
+	b: string,
+	repoRoot?: string,
+): boolean {
 	if (a === b) return true;
 
-	const normA = a.replace(/\/+$/, "");
-	const normB = b.replace(/\/+$/, "");
+	const normA = normalizePattern(a);
+	const normB = normalizePattern(b);
 
 	if (normA === normB) return true;
 
-	// Remove trailing ** for prefix comparison
-	const prefixA = normA.replace(/\/?\*\*$/, "");
-	const prefixB = normB.replace(/\/?\*\*$/, "");
-
-	const aIsGlob = normA.includes("*");
-	const bIsGlob = normB.includes("*");
-
-	// If both are glob patterns, check prefix overlap
-	if (aIsGlob && bIsGlob) {
-		return prefixA.startsWith(prefixB) || prefixB.startsWith(prefixA);
+	const matchedA = resolvePatternMatches(normA, repoRoot);
+	const matchedB = resolvePatternMatches(normB, repoRoot);
+	if (matchedA.length > 0 && matchedB.length > 0) {
+		return filesIntersect(matchedA, matchedB);
 	}
 
-	// One is a glob, the other is a specific path
+	const aIsGlob = hasGlobSyntax(normA);
+	const bIsGlob = hasGlobSyntax(normB);
+
+	if (aIsGlob && bIsGlob) {
+		const prefixA = globPrefix(normA);
+		const prefixB = globPrefix(normB);
+		if (!prefixA || !prefixB) return true;
+		return (
+			prefixA === prefixB ||
+			prefixA.startsWith(`${prefixB}/`) ||
+			prefixB.startsWith(`${prefixA}/`)
+		);
+	}
+
 	if (aIsGlob) {
-		return matchGlob(normA, normB);
+		return matchesPattern(normA, normB);
 	}
 	if (bIsGlob) {
-		return matchGlob(normB, normA);
+		return matchesPattern(normB, normA);
 	}
 
-	// Both are specific paths — check if one is a prefix of the other (directory containment)
 	return normA.startsWith(`${normB}/`) || normB.startsWith(`${normA}/`);
-}
-
-function matchGlob(pattern: string, path: string): boolean {
-	// Handle ** (match any number of directories)
-	if (pattern.endsWith("/**")) {
-		const prefix = pattern.slice(0, -3);
-		return path.startsWith(`${prefix}/`) || path === prefix;
-	}
-
-	// Handle * (single segment wildcard)
-	const parts = pattern.split("*");
-	if (parts.length === 2) {
-		return path.startsWith(parts[0]) && path.endsWith(parts[1]);
-	}
-
-	// Prefix-based: if pattern prefix matches path prefix, consider overlap
-	const prefix = pattern.replace(/\/?\*.*$/, "");
-	return (
-		path.startsWith(`${prefix}/`) ||
-		path === prefix ||
-		prefix.startsWith(`${path}/`)
-	);
 }

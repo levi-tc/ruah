@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
-import { patternsOverlap } from "./state.js";
+import { loadState, type HistoryEntry, patternsOverlap } from "./state.js";
 import type { WorkflowTask } from "./workflow.js";
 
 // --- Types ---
@@ -26,6 +26,8 @@ export interface TaskPairOverlap {
 	overlapRatio: number;
 	/** Size-weighted risk score */
 	riskScore: number;
+	/** Extra risk pulled from prior ruah failures/conflicts */
+	historyPenalty: number;
 }
 
 export type StageStrategy = "parallel" | "parallel-with-contracts" | "serial";
@@ -100,6 +102,7 @@ export function analyzeStageOverlaps(
 	repoRoot: string,
 ): TaskPairOverlap[] {
 	const overlaps: TaskPairOverlap[] = [];
+	const history = loadState(repoRoot).history;
 
 	for (let i = 0; i < tasks.length; i++) {
 		for (let j = i + 1; j < tasks.length; j++) {
@@ -109,7 +112,7 @@ export function analyzeStageOverlaps(
 
 			for (const pa of a.files) {
 				for (const pb of b.files) {
-					if (patternsOverlap(pa, pb)) {
+					if (patternsOverlap(pa, pb, repoRoot)) {
 						// Add both patterns to show what overlaps
 						if (!overlapping.includes(pa)) overlapping.push(pa);
 						if (!overlapping.includes(pb)) overlapping.push(pb);
@@ -120,10 +123,16 @@ export function analyzeStageOverlaps(
 			if (overlapping.length > 0) {
 				const unionSize = new Set([...a.files, ...b.files]).size;
 				const overlapRatio = overlapping.length / unionSize;
-				const riskScore = overlapping.reduce(
+				const baseRisk = overlapping.reduce(
 					(sum, p) => sum + estimatePatternRisk(p, repoRoot),
 					0,
 				);
+				const historyPenalty = calculateHistoryPenalty(
+					a.name,
+					b.name,
+					history,
+				);
+				const riskScore = baseRisk + historyPenalty;
 
 				overlaps.push({
 					taskA: a.name,
@@ -131,6 +140,7 @@ export function analyzeStageOverlaps(
 					overlappingPatterns: overlapping,
 					overlapRatio: Math.min(overlapRatio, 1.0),
 					riskScore,
+					historyPenalty,
 				});
 			}
 		}
@@ -276,22 +286,38 @@ export function decideStageStrategy(
 
 		const maxRatio = Math.max(...overlaps.map((o) => o.overlapRatio));
 		const maxRisk = Math.max(...overlaps.map((o) => o.riskScore));
+		const historyPenalty = overlaps.reduce(
+			(sum, overlap) => sum + overlap.historyPenalty,
+			0,
+		);
+		const historySuffix =
+			historyPenalty > 0
+				? ` including ${historyPenalty.toFixed(1)} historical risk`
+				: "";
 
 		return {
 			strategy: "serial",
 			tasks,
 			serialOrder: sorted.map((t) => [t]),
-			reason: `high overlap detected (ratio: ${maxRatio.toFixed(2)}, risk: ${maxRisk.toFixed(1)}) — serializing to prevent conflicts`,
+			reason: `high overlap detected (ratio: ${maxRatio.toFixed(2)}, risk: ${maxRisk.toFixed(1)}${historySuffix}) — serializing to prevent conflicts`,
 		};
 	}
 
 	// Manageable overlap — parallel with contracts
 	const contracts = buildContracts(tasks, overlaps);
+	const historyPenalty = overlaps.reduce(
+		(sum, overlap) => sum + overlap.historyPenalty,
+		0,
+	);
+	const historySuffix =
+		historyPenalty > 0
+			? ` with ${historyPenalty.toFixed(1)} historical risk`
+			: "";
 	return {
 		strategy: "parallel-with-contracts",
 		tasks,
 		contracts,
-		reason: `${overlaps.length} overlap(s) within thresholds — parallel with modification contracts`,
+		reason: `${overlaps.length} overlap(s) within thresholds${historySuffix} — parallel with modification contracts`,
 	};
 }
 
@@ -311,6 +337,33 @@ export function splitStageByParallelLimit(
 		batches.push(stage.slice(i, i + maxParallel));
 	}
 	return batches;
+}
+
+function calculateHistoryPenalty(
+	taskA: string,
+	taskB: string,
+	history: HistoryEntry[],
+): number {
+	const taskNames = new Set([taskA, taskB]);
+	let penalty = 0;
+
+	for (const entry of history) {
+		if (typeof entry.task !== "string" || !taskNames.has(entry.task)) {
+			continue;
+		}
+		if (entry.action === "task.merge_conflict") {
+			penalty += 1.5;
+			continue;
+		}
+		if (
+			entry.action === "task.failed" &&
+			(entry.reason === "contract-violation" || entry.reason === "merge-conflict")
+		) {
+			penalty += 1.0;
+		}
+	}
+
+	return penalty;
 }
 
 // --- Top-Level Planner ---
