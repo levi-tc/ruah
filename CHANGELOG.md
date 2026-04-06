@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-04-06
+
+### Added
+- **`ruah task retry <name>`** — re-execute failed tasks without recreating worktrees. Supports `--dry-run` and `--no-exec` flags.
+- **`ruah config`** — display resolved project configuration
+- **Config file support** — load project defaults from `.ruahrc` (JSON) or `package.json` `"ruah"` section. Supports `baseBranch`, `executor`, `timeout`, `files`, `skipGates`, and `parallel`. `.ruahrc` takes precedence.
+- **`ruah workflow create <name>`** — scaffold workflow markdown files from a built-in template with config, parallel tasks, and dependency examples. Supports `--force` to overwrite.
+
+### Changed
+- Task create and workflow run now read defaults from config file when CLI flags are not provided
+
 ## [0.1.1] - 2026-04-06
 
 ### Added

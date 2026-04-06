@@ -66,7 +66,7 @@ describe("CLI integration", () => {
 
 	it("--version prints version", () => {
 		const out = ruah("--version", repo);
-		assert.ok(out.includes("ruah 0.1.1"));
+		assert.ok(out.includes("ruah 0.2.0"));
 	});
 
 	it("init creates .ruah directory structure", () => {
