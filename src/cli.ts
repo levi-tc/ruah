@@ -52,6 +52,8 @@ Workflow subcommands:
     --json               Output as JSON
   list           List available workflows
     --json               Output as JSON
+  create <name>  Create workflow from template
+    --force              Overwrite existing workflow
 
 Options:
   --help, -h     Show this help

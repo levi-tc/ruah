@@ -1,3 +1,4 @@
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ParsedArgs } from "../cli.js";
 import { loadConfig } from "../core/config.js";
@@ -39,7 +40,7 @@ import {
 export async function run(args: ParsedArgs): Promise<void> {
 	const sub = args._[1];
 	if (!sub) {
-		logError("Missing subcommand. Usage: ruah workflow <run|plan|list>");
+		logError("Missing subcommand. Usage: ruah workflow <run|plan|list|create>");
 		process.exit(1);
 	}
 
@@ -52,6 +53,8 @@ export async function run(args: ParsedArgs): Promise<void> {
 			return workflowPlan(args, root);
 		case "list":
 			return workflowList(args, root);
+		case "create":
+			return workflowCreate(args, root);
 		default:
 			logError(`Unknown workflow subcommand: ${sub}`);
 			process.exit(1);
@@ -347,4 +350,63 @@ function workflowList(args: ParsedArgs, root: string): void {
 	for (const w of workflows) {
 		logInfo(`  ${w.name} (${w.path})`);
 	}
+}
+
+function workflowCreate(args: ParsedArgs, root: string): void {
+	const name = args._[2];
+	if (!name) {
+		logError("Missing workflow name. Usage: ruah workflow create <name>");
+		process.exit(1);
+	}
+
+	const dir = join(root, ".ruah", "workflows");
+	mkdirSync(dir, { recursive: true });
+
+	const filePath = join(dir, `${name}.md`);
+
+	if (existsSync(filePath) && !args.flags.force) {
+		logError(`Workflow "${name}" already exists at ${filePath}`);
+		logInfo("Use --force to overwrite");
+		process.exit(1);
+	}
+
+	const template = generateTemplate(name);
+	writeFileSync(filePath, template, "utf-8");
+
+	logSuccess(`Workflow "${name}" created`);
+	log(`File: ${filePath}`);
+	logInfo("Edit the file to define your tasks, then run:");
+	logInfo(`  ruah workflow run ${filePath}`);
+}
+
+function generateTemplate(name: string): string {
+	return `# Workflow: ${name}
+
+## Config
+- base: main
+- parallel: true
+
+## Tasks
+
+### task-1
+- files: src/feature-a/**
+- executor: claude-code
+- depends: []
+- prompt: |
+    Implement feature A.
+
+### task-2
+- files: src/feature-b/**
+- executor: claude-code
+- depends: []
+- prompt: |
+    Implement feature B.
+
+### integration
+- files: test/**
+- executor: claude-code
+- depends: [task-1, task-2]
+- prompt: |
+    Write integration tests for features A and B.
+`;
 }
