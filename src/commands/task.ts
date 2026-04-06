@@ -20,6 +20,7 @@ import {
 	getChildren,
 	getUnmergedChildren,
 	loadState,
+	type RuahState,
 	releaseLocks,
 	saveState,
 } from "../core/state.js";
@@ -38,7 +39,7 @@ export async function run(args: ParsedArgs): Promise<void> {
 	const sub = args._[1];
 	if (!sub) {
 		logError(
-			"Missing subcommand. Usage: ruah task <create|start|done|merge|list|cancel>",
+			"Missing subcommand. Usage: ruah task <create|start|done|merge|list|children|cancel|retry|takeover>",
 		);
 		process.exit(1);
 	}
@@ -62,9 +63,59 @@ export async function run(args: ParsedArgs): Promise<void> {
 			return taskChildren(args, root);
 		case "retry":
 			return taskRetry(args, root);
+		case "takeover":
+			return taskTakeover(args, root);
 		default:
 			logError(`Unknown task subcommand: ${sub}`);
 			process.exit(1);
+	}
+}
+
+async function executeTaskLifecycle(
+	task: Task,
+	state: RuahState,
+	root: string,
+	options: {
+		dryRun: boolean;
+		noExec: string | boolean | undefined;
+		startVerb: string;
+		successMessage: string;
+		failurePrefix: string;
+	},
+): Promise<void> {
+	if (task.prompt && !options.noExec) {
+		log(`${options.startVerb} ${task.executor || "default"}...`);
+
+		const result = await executeTask(task, task.worktree, {
+			dryRun: options.dryRun,
+		});
+
+		if (options.dryRun) {
+			logInfo(`Would run: ${result.command}`);
+			return;
+		}
+
+		if (result.success) {
+			task.status = "done";
+			task.completedAt = new Date().toISOString();
+			addHistoryEntry(state, "task.done", { task: task.name });
+			saveState(root, state);
+			logSuccess(options.successMessage);
+		} else {
+			task.status = "failed";
+			addHistoryEntry(state, "task.failed", {
+				task: task.name,
+				error: result.error,
+			});
+			saveState(root, state);
+			logError(
+				`${options.failurePrefix}: ${result.error || `exit code ${result.exitCode}`}`,
+			);
+			process.exit(1);
+		}
+	} else if (!task.prompt) {
+		logInfo("No prompt set — task is ready for manual work");
+		log(`Worktree: ${task.worktree}`);
 	}
 }
 
@@ -161,6 +212,7 @@ function taskCreate(args: ParsedArgs, root: string): void {
 		startedAt: null,
 		completedAt: null,
 		mergedAt: null,
+		workflow: parentTask?.workflow ? { ...parentTask.workflow } : null,
 	};
 
 	// Register child on parent
@@ -216,40 +268,13 @@ async function taskStart(args: ParsedArgs, root: string): Promise<void> {
 	const noExec = args.flags["no-exec"];
 	const dryRun = args.flags["dry-run"];
 
-	if (task.prompt && !noExec) {
-		log(`Executing with ${task.executor || "default"}...`);
-
-		const result = await executeTask(task, task.worktree, {
-			dryRun: !!dryRun,
-		});
-
-		if (dryRun) {
-			logInfo(`Would run: ${result.command}`);
-			return;
-		}
-
-		if (result.success) {
-			task.status = "done";
-			task.completedAt = new Date().toISOString();
-			addHistoryEntry(state, "task.done", { task: name });
-			saveState(root, state);
-			logSuccess(`Task "${name}" completed successfully`);
-		} else {
-			task.status = "failed";
-			addHistoryEntry(state, "task.failed", {
-				task: name,
-				error: result.error,
-			});
-			saveState(root, state);
-			logError(
-				`Task "${name}" failed: ${result.error || `exit code ${result.exitCode}`}`,
-			);
-			process.exit(1);
-		}
-	} else if (!task.prompt) {
-		logInfo("No prompt set — task is ready for manual work");
-		log(`Worktree: ${task.worktree}`);
-	}
+	await executeTaskLifecycle(task, state, root, {
+		dryRun: !!dryRun,
+		noExec,
+		startVerb: "Executing with",
+		successMessage: `Task "${name}" completed successfully`,
+		failurePrefix: `Task "${name}" failed`,
+	});
 }
 
 function taskDone(args: ParsedArgs, root: string): void {
@@ -518,39 +543,92 @@ async function taskRetry(args: ParsedArgs, root: string): Promise<void> {
 	logSuccess(`Task "${name}" reset to in-progress`);
 
 	if (task.prompt && !noExec) {
-		log(`Re-executing with ${task.executor || "default"}...`);
-
-		const result = await executeTask(task, task.worktree, {
+		await executeTaskLifecycle(task, state, root, {
 			dryRun: !!dryRun,
+			noExec,
+			startVerb: "Re-executing with",
+			successMessage: `Task "${name}" completed successfully on retry`,
+			failurePrefix: `Task "${name}" failed again`,
 		});
-
-		if (dryRun) {
-			logInfo(`Would run: ${result.command}`);
-			return;
-		}
-
-		if (result.success) {
-			task.status = "done";
-			task.completedAt = new Date().toISOString();
-			addHistoryEntry(state, "task.done", { task: name });
-			saveState(root, state);
-			logSuccess(`Task "${name}" completed successfully on retry`);
-		} else {
-			task.status = "failed";
-			addHistoryEntry(state, "task.failed", {
-				task: name,
-				error: result.error,
-			});
-			saveState(root, state);
-			logError(
-				`Task "${name}" failed again: ${result.error || `exit code ${result.exitCode}`}`,
-			);
-			process.exit(1);
-		}
 	} else if (!task.prompt) {
 		logInfo("No prompt set — task is ready for manual retry");
 		log(`Worktree: ${task.worktree}`);
 	}
+}
+
+async function taskTakeover(args: ParsedArgs, root: string): Promise<void> {
+	const name = args._[2];
+	if (!name) {
+		logError("Missing task name. Usage: ruah task takeover <name>");
+		process.exit(1);
+	}
+
+	const state = loadState(root);
+	const task = state.tasks[name];
+	if (!task) {
+		logError(`Task "${name}" not found`);
+		process.exit(1);
+	}
+	if (
+		task.status !== "created" &&
+		task.status !== "in-progress" &&
+		task.status !== "failed"
+	) {
+		logError(
+			`Task "${name}" is ${task.status}, can only take over created, in-progress, or failed tasks`,
+		);
+		process.exit(1);
+	}
+
+	const dryRun = args.flags["dry-run"];
+	const noExec = args.flags["no-exec"];
+	const previousStatus = task.status;
+	const previousExecutor = task.executor;
+	const startedAt = new Date().toISOString();
+	const nextTask: Task = {
+		...task,
+		status: "in-progress",
+		startedAt,
+		completedAt: null,
+	};
+
+	if (typeof args.flags.executor === "string") {
+		nextTask.executor = args.flags.executor;
+	}
+	if (typeof args.flags.prompt === "string") {
+		nextTask.prompt = args.flags.prompt;
+	}
+
+	logSuccess(`Task "${name}" taken over`);
+	logInfo(`Worktree: ${nextTask.worktree}`);
+	if (nextTask.workflow) {
+		logInfo(
+			`Workflow: ${nextTask.workflow.name} (stage ${nextTask.workflow.stage})`,
+		);
+	}
+	if (typeof args.flags.executor === "string") {
+		logInfo(`Executor: ${nextTask.executor}`);
+	}
+
+	if (!dryRun) {
+		state.tasks[name] = nextTask;
+		addHistoryEntry(state, "task.taken_over", {
+			task: name,
+			fromStatus: previousStatus,
+			fromExecutor: previousExecutor,
+			toExecutor: nextTask.executor,
+			workflow: nextTask.workflow?.name || null,
+		});
+		saveState(root, state);
+	}
+
+	await executeTaskLifecycle(nextTask, state, root, {
+		dryRun: !!dryRun,
+		noExec,
+		startVerb: "Executing with",
+		successMessage: `Task "${name}" completed successfully after takeover`,
+		failurePrefix: `Task "${name}" failed after takeover`,
+	});
 }
 
 function taskCancel(args: ParsedArgs, root: string): void {

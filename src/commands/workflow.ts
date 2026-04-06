@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { ParsedArgs } from "../cli.js";
 import { loadConfig } from "../core/config.js";
 import type { TaskDef } from "../core/executor.js";
@@ -83,11 +83,12 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 		logError("Missing workflow file. Usage: ruah workflow run <file.md>");
 		process.exit(1);
 	}
+	const workflowPath = resolve(file);
 
 	const dryRun = args.flags["dry-run"];
 	const json = args.flags.json;
 
-	const workflow = parseWorkflow(file);
+	const workflow = parseWorkflow(workflowPath);
 	const validation = validateDAG(workflow.tasks);
 	if (!validation.valid) {
 		logError("Workflow validation failed:");
@@ -207,6 +208,12 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 					startedAt: new Date().toISOString(),
 					completedAt: null,
 					mergedAt: null,
+					workflow: {
+						name: workflow.name,
+						path: workflowPath,
+						stage: i + 1,
+						depends: [...taskDef.depends],
+					},
 				};
 				addHistoryEntry(state, "task.created", { task: taskDef.name });
 				saveState(root, state);

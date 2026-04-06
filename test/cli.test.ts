@@ -66,7 +66,7 @@ describe("CLI integration", () => {
 
 	it("--version prints version", () => {
 		const out = ruah("--version", repo);
-		assert.ok(out.includes("ruah 0.3.1"));
+		assert.ok(out.includes("ruah 0.3.2"));
 	});
 
 	it("init creates .ruah directory structure", () => {
@@ -295,5 +295,65 @@ describe("CLI integration", () => {
 				out.toLowerCase().includes("conflict"),
 			`Expected scope/conflict error: ${out}`,
 		);
+	});
+
+	it("task takeover lets another executor adopt an active worktree", () => {
+		ruah("init", repo);
+		ruah('task create handoff --files "src/**" --executor claude-code', repo);
+		ruah("task start handoff --no-exec", repo);
+
+		const out = ruah(
+			'task takeover handoff --executor codex --prompt "echo resumed" --no-exec',
+			repo,
+		);
+		assert.ok(out.includes('Task "handoff" taken over'));
+
+		const state = JSON.parse(
+			readFileSync(join(repo, ".ruah", "state.json"), "utf-8"),
+		);
+		assert.equal(state.tasks.handoff.status, "in-progress");
+		assert.equal(state.tasks.handoff.executor, "codex");
+		assert.equal(state.tasks.handoff.prompt, "echo resumed");
+		assert.ok(
+			state.history.some(
+				(entry: { action: string }) => entry.action === "task.taken_over",
+			),
+		);
+	});
+
+	it("workflow run persists workflow metadata for later takeover", () => {
+		ruah("init", repo);
+		const workflowPath = join(repo, ".ruah", "workflows", "handoff.md");
+		writeFileSync(
+			workflowPath,
+			`# Workflow: Handoff Test
+
+## Config
+- base: main
+- parallel: false
+
+## Tasks
+
+### recoverable
+- files: README.md
+- executor: script
+- depends: []
+- prompt: echo workflow-task
+`,
+			"utf-8",
+		);
+
+		const out = ruah(`workflow run ${workflowPath}`, repo);
+		assert.ok(out.includes('Workflow "Handoff Test" complete'));
+
+		const state = JSON.parse(
+			readFileSync(join(repo, ".ruah", "state.json"), "utf-8"),
+		);
+		assert.deepEqual(state.tasks.recoverable.workflow, {
+			name: "Handoff Test",
+			path: workflowPath,
+			stage: 1,
+			depends: [],
+		});
 	});
 });

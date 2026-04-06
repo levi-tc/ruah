@@ -6,6 +6,7 @@ import {
 	readCragGovernance,
 } from "../core/integrations.js";
 import { reconcileStateWithGit } from "../core/reconcile.js";
+import type { Task } from "../core/state.js";
 import { loadState } from "../core/state.js";
 import {
 	formatLocks,
@@ -15,6 +16,42 @@ import {
 	logInfo,
 	logSuccess,
 } from "../utils/format.js";
+
+interface WorkflowSummary {
+	name: string;
+	path: string;
+	stageCount: number;
+	taskNames: string[];
+	counts: Record<string, number>;
+}
+
+function summarizeWorkflows(tasks: Task[]): WorkflowSummary[] {
+	const summaries = new Map<string, WorkflowSummary>();
+
+	for (const task of tasks) {
+		if (!task.workflow) continue;
+		const key = `${task.workflow.path}:${task.workflow.name}`;
+		const existing = summaries.get(key);
+		if (existing) {
+			existing.taskNames.push(task.name);
+			existing.stageCount = Math.max(existing.stageCount, task.workflow.stage);
+			existing.counts[task.status] = (existing.counts[task.status] || 0) + 1;
+			continue;
+		}
+
+		summaries.set(key, {
+			name: task.workflow.name,
+			path: task.workflow.path,
+			stageCount: task.workflow.stage,
+			taskNames: [task.name],
+			counts: {
+				[task.status]: 1,
+			},
+		});
+	}
+
+	return [...summaries.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
 
 export async function run(args: ParsedArgs): Promise<void> {
 	const root = getRepoRoot();
@@ -33,6 +70,7 @@ export async function run(args: ParsedArgs): Promise<void> {
 	const merged = tasks.filter((t) => t.status === "merged").length;
 	const failed = tasks.filter((t) => t.status === "failed").length;
 	const created = tasks.filter((t) => t.status === "created").length;
+	const workflows = summarizeWorkflows(tasks);
 
 	if (json) {
 		console.log(
@@ -53,6 +91,7 @@ export async function run(args: ParsedArgs): Promise<void> {
 					},
 					tasks: state.tasks,
 					locks: state.locks,
+					workflows,
 					worktrees: worktrees.map((w) => ({
 						path: w.path,
 						branch: w.branch,
@@ -125,6 +164,20 @@ export async function run(args: ParsedArgs): Promise<void> {
 		console.log("");
 		log(heading("File locks:"));
 		console.log(formatLocks(state.locks));
+	}
+
+	if (workflows.length > 0) {
+		console.log("");
+		log(heading("Workflows:"));
+		for (const workflow of workflows) {
+			const counts = Object.entries(workflow.counts)
+				.map(([status, count]) => `${count} ${status}`)
+				.join(", ");
+			logInfo(
+				`  ${workflow.name} (${workflow.taskNames.length} task(s), ${counts})`,
+			);
+			logInfo(`  Path: ${workflow.path}`);
+		}
 	}
 
 	// Active worktrees

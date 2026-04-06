@@ -9,6 +9,13 @@ import {
 import { dirname, join } from "node:path";
 import type { TaskStatus } from "../utils/format.js";
 
+export interface WorkflowRef {
+	name: string;
+	path: string;
+	stage: number;
+	depends: string[];
+}
+
 export interface Task {
 	name: string;
 	status: TaskStatus;
@@ -25,6 +32,7 @@ export interface Task {
 	startedAt: string | null;
 	completedAt: string | null;
 	mergedAt: string | null;
+	workflow?: WorkflowRef | null;
 }
 
 export interface HistoryEntry {

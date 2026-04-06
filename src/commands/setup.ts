@@ -32,6 +32,9 @@ ruah task start <name>
 ruah task done <name>
 ruah task merge <name>
 
+# Adopt a stranded task in the same worktree
+ruah task takeover <name> --executor codex
+
 # Workflows (DAG-based)
 ruah workflow run <file.md>
 ruah workflow plan <file.md>
@@ -46,6 +49,7 @@ ruah task create <child> --parent <parent> --files "src/sub/**" --executor claud
 - A task can be split into subtasks → use \`--parent\` for hierarchical branching
 - Quality gates needed before merge → ruah auto-detects governance.md
 - Need isolated worktrees for conflict-free parallel edits
+- An agent stopped mid-task but the worktree still exists → inspect \`ruah status --json\` and use \`ruah task takeover <name>\`
 
 ## Environment Variables (available in task worktrees)
 
@@ -72,6 +76,7 @@ This project uses \`ruah\` for multi-agent orchestration.
 - \`ruah task start <name>\` — start task execution in worktree
 - \`ruah task done <name>\` — mark complete
 - \`ruah task merge <name>\` — merge back (runs governance gates)
+- \`ruah task takeover <name> --executor codex\` — adopt a stranded task/worktree with another agent
 - \`ruah workflow run <file.md>\` — execute DAG workflow
 - \`ruah task create <child> --parent <parent> --files "..." --prompt "..."\` — spawn subtask
 

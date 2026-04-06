@@ -11,6 +11,10 @@ export interface TaskLike {
 	status: TaskStatus;
 	files?: string[];
 	executor?: string | null;
+	workflow?: {
+		name: string;
+		stage: number;
+	} | null;
 }
 
 const COLORS: Record<string, string> = {
@@ -88,7 +92,10 @@ export function formatTask(task: TaskLike): string {
 			? c("dim", ` [${task.files.join(", ")}]`)
 			: "";
 	const executor = task.executor ? c("dim", ` (${task.executor})`) : "";
-	return `  ${status.padEnd(25)} ${c("bold", task.name)}${files}${executor}`;
+	const workflow = task.workflow
+		? c("dim", ` {wf: ${task.workflow.name}#${task.workflow.stage}}`)
+		: "";
+	return `  ${status.padEnd(25)} ${c("bold", task.name)}${files}${executor}${workflow}`;
 }
 
 export function formatTaskList(

@@ -8,7 +8,7 @@ export interface ParsedArgs {
 	flags: Record<string, string | boolean>;
 }
 
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 
 const HELP = `
 ${label()} — multi-agent orchestration
@@ -44,6 +44,11 @@ Task subcommands:
   cancel <name>  Cancel and clean up task (cascades to subtasks)
   retry <name>   Retry a failed task (re-execute without recreating worktree)
     --no-exec            Reset status only, don't run executor
+    --dry-run            Show what would be executed
+  takeover <name> Adopt a created/in-progress/failed task in its existing worktree
+    --executor <cmd>     Switch executor for the takeover
+    --prompt <text>      Replace the stored prompt before resuming
+    --no-exec            Mark as taken over without executing
     --dry-run            Show what would be executed
 
 Workflow subcommands:
