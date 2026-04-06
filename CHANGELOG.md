@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-04-06
+
+### Added
+- **Smart planner** — overlap analyzer that decides per-stage: parallel, parallel-with-contracts, or serial. Agents receive modification contracts in `.ruah-task.md` specifying owned, shared-append, and read-only file boundaries.
+- **`ruah clean`** — remove stale tasks and orphaned locks from aborted workflows. Supports `--dry-run` and `--force` flags.
+- **Parallelism cap** — `maxParallel` config option (default: 5) limits concurrent tasks per stage.
+- **Runtime conflict detection** — `checkMergeConflicts()` uses `git merge-tree` for read-only conflict checks between branches.
+- **`on_conflict` strategy** — per-task and per-workflow conflict handling: `fail` (default), `rebase`, or `retry`.
+- **Codex MCP adapter** — `codex-mcp` executor connects to Codex MCP server via JSON-RPC, falls back to CLI.
+
+### Fixed
+- Workflow abort now auto-cleans failed stage tasks instead of leaving orphaned locks
+
 ## [0.2.0] - 2026-04-06
 
 ### Added
