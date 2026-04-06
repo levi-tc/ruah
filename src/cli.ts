@@ -59,6 +59,12 @@ Options:
   --help, -h     Show this help
   --version, -v  Show version
 
+Smart planner:
+  When workflows use parallel: true, ruah analyzes file overlaps
+  and decides per-stage: parallel, parallel-with-contracts, or serial.
+  Agents receive modification contracts in .ruah-task.md specifying
+  owned, shared-append, and read-only file boundaries.
+
 crag integration:
   When .claude/governance.md is detected, ruah automatically
   enforces quality gates before merging task branches.

@@ -180,8 +180,8 @@ export function buildContracts(
 	for (const [pattern, refs] of patternRefCount.entries()) {
 		if (refs.length === 1) {
 			// Single task references this pattern — owned
-			const contract = contracts.get(refs[0])!;
-			contract.owned.push(pattern);
+			const contract = contracts.get(refs[0]);
+			if (contract) contract.owned.push(pattern);
 		} else {
 			// Multiple tasks reference this — find primary (most files, then alphabetical)
 			const sorted = [...refs].sort((a, b) => {
@@ -191,7 +191,8 @@ export function buildContracts(
 			const primary = sorted[0];
 
 			for (const taskName of refs) {
-				const contract = contracts.get(taskName)!;
+				const contract = contracts.get(taskName);
+				if (!contract) continue;
 				if (taskName === primary) {
 					contract.owned.push(pattern);
 				} else {
@@ -204,7 +205,8 @@ export function buildContracts(
 	// Assign read-only: patterns referenced by other tasks but not this one
 	const allPatterns = new Set(patternRefCount.keys());
 	for (const task of tasks) {
-		const contract = contracts.get(task.name)!;
+		const contract = contracts.get(task.name);
+		if (!contract) continue;
 		const myPatterns = new Set(task.files);
 		for (const pattern of allPatterns) {
 			if (

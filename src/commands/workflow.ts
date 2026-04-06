@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ParsedArgs } from "../cli.js";
 import { loadConfig } from "../core/config.js";
+import type { TaskDef } from "../core/executor.js";
 import { executeTask } from "../core/executor.js";
 import {
 	createWorktree,
@@ -14,6 +15,8 @@ import {
 	readCragGovernance,
 	runGates,
 } from "../core/integrations.js";
+import type { SmartPlan, StageDecision } from "../core/planner.js";
+import { createSmartPlan } from "../core/planner.js";
 import {
 	acquireLocks,
 	addHistoryEntry,
@@ -35,6 +38,7 @@ import {
 	logError,
 	logInfo,
 	logSuccess,
+	logWarn,
 } from "../utils/format.js";
 
 export async function run(args: ParsedArgs): Promise<void> {
@@ -108,6 +112,20 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 		return;
 	}
 
+	// Smart planner: analyze overlaps and decide parallel/serial per stage
+	let smartPlan: SmartPlan | null = null;
+	if (workflow.config.parallel) {
+		smartPlan = createSmartPlan(plan, root);
+		logInfo(
+			`Planner: ${smartPlan.summary.parallelStages} parallel, ${smartPlan.summary.contractStages} contract, ${smartPlan.summary.serialStages} serial stage(s)`,
+		);
+		if (smartPlan.summary.overlapCount > 0) {
+			logWarn(
+				`Planner: ${smartPlan.summary.overlapCount} file overlap(s) detected`,
+			);
+		}
+	}
+
 	log(`Workflow: ${heading(workflow.name)}`);
 	log(`Base: ${baseBranch}`);
 	log(`Tasks: ${workflow.tasks.length}`);
@@ -117,6 +135,12 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 	console.log("");
 
 	if (dryRun) {
+		if (smartPlan) {
+			for (let i = 0; i < smartPlan.refinedStages.length; i++) {
+				const decision = smartPlan.refinedStages[i];
+				logInfo(`  Stage ${i + 1}: ${decision.strategy} — ${decision.reason}`);
+			}
+		}
 		logInfo("Dry run — no tasks will be executed");
 		return;
 	}
@@ -133,129 +157,157 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 
 	for (let i = 0; i < plan.length; i++) {
 		const stage = plan[i];
-		log(`Stage ${i + 1}/${plan.length} — ${stage.length} task(s)`);
+		const decision: StageDecision | undefined = smartPlan?.refinedStages[i];
+		const stageStrategy = decision?.strategy || "parallel";
 
-		// Create worktrees and check locks
-		const stageTasks: StageTask[] = [];
-		for (const taskDef of stage) {
-			if (taskDef.files.length > 0) {
-				const lockResult = acquireLocks(state, taskDef.name, taskDef.files);
-				if (!lockResult.success) {
-					logError(
-						`Lock conflict for "${taskDef.name}": ${lockResult.conflicts.map((c) => c.pattern).join(", ")}`,
-					);
-					process.exit(1);
-				}
-			}
-
-			const { worktreePath, branchName } = createWorktree(
-				taskDef.name,
-				baseBranch,
-				root,
-			);
-			state.tasks[taskDef.name] = {
-				name: taskDef.name,
-				status: "in-progress",
-				baseBranch,
-				branch: branchName,
-				worktree: worktreePath,
-				files: taskDef.files,
-				executor: taskDef.executor,
-				prompt: taskDef.prompt,
-				parent: null,
-				children: [],
-				createdAt: new Date().toISOString(),
-				startedAt: new Date().toISOString(),
-				completedAt: null,
-				mergedAt: null,
-			};
-			addHistoryEntry(state, "task.created", { task: taskDef.name });
-			saveState(root, state);
-
-			stageTasks.push({ def: taskDef, worktreePath });
-		}
-
-		// Execute tasks (parallel if configured and stage has multiple)
-		const execPromises = stageTasks.map(
-			async ({ def, worktreePath }): Promise<ExecResult> => {
-				logInfo(`  Running: ${def.name} (${def.executor || "script"})`);
-				const result = await executeTask(def, worktreePath, {
-					silent: true,
-				});
-
-				if (result.success) {
-					state.tasks[def.name].status = "done";
-					state.tasks[def.name].completedAt = new Date().toISOString();
-					addHistoryEntry(state, "task.done", { task: def.name });
-					logSuccess(`  ${def.name}: completed`);
-				} else {
-					state.tasks[def.name].status = "failed";
-					addHistoryEntry(state, "task.failed", { task: def.name });
-					logError(
-						`  ${def.name}: failed — ${result.error || `exit ${result.exitCode}`}`,
-					);
-				}
-
-				saveState(root, state);
-				return {
-					name: def.name,
-					success: result.success,
-					exitCode: result.exitCode,
-					error: result.error,
-				};
-			},
+		log(
+			`Stage ${i + 1}/${plan.length} — ${stage.length} task(s) [${stageStrategy}]`,
 		);
+		if (decision && stageStrategy !== "parallel") {
+			logInfo(`  ${decision.reason}`);
+		}
 
-		let execResults: ExecResult[];
-		if (workflow.config.parallel && stageTasks.length > 1) {
-			execResults = await Promise.all(execPromises);
-		} else {
-			execResults = [];
-			for (const p of execPromises) {
-				execResults.push(await p);
+		// If serial, process tasks one at a time in the planner's order
+		const stageOrder: WorkflowTask[][] =
+			stageStrategy === "serial" && decision?.serialOrder
+				? decision.serialOrder
+				: [stage];
+
+		for (const substage of stageOrder) {
+			// Create worktrees and check locks
+			const stageTasks: StageTask[] = [];
+			for (const taskDef of substage) {
+				if (taskDef.files.length > 0) {
+					const lockResult = acquireLocks(state, taskDef.name, taskDef.files);
+					if (!lockResult.success) {
+						logError(
+							`Lock conflict for "${taskDef.name}": ${lockResult.conflicts.map((c) => c.pattern).join(", ")}`,
+						);
+						process.exit(1);
+					}
+				}
+
+				const { worktreePath, branchName } = createWorktree(
+					taskDef.name,
+					baseBranch,
+					root,
+				);
+				state.tasks[taskDef.name] = {
+					name: taskDef.name,
+					status: "in-progress",
+					baseBranch,
+					branch: branchName,
+					worktree: worktreePath,
+					files: taskDef.files,
+					executor: taskDef.executor,
+					prompt: taskDef.prompt,
+					parent: null,
+					children: [],
+					createdAt: new Date().toISOString(),
+					startedAt: new Date().toISOString(),
+					completedAt: null,
+					mergedAt: null,
+				};
+				addHistoryEntry(state, "task.created", { task: taskDef.name });
+				saveState(root, state);
+
+				stageTasks.push({ def: taskDef, worktreePath });
 			}
-		}
 
-		// Check for failures
-		const failures = execResults.filter((r) => !r.success);
-		if (failures.length > 0) {
-			logError(`Stage ${i + 1} failed. Halting workflow.`);
-			results.push(...execResults);
-			break;
-		}
+			// Build TaskDef with contract (if planner assigned one)
+			const execPromises = stageTasks.map(
+				async ({ def, worktreePath }): Promise<ExecResult> => {
+					logInfo(`  Running: ${def.name} (${def.executor || "script"})`);
 
-		// Run crag gates if available
-		if (governance) {
-			for (const { def, worktreePath } of stageTasks) {
-				const gateResult = runGates(governance, worktreePath);
-				if (!gateResult.passed) {
-					logError(`Gate failed for "${def.name}". Halting workflow.`);
+					// Inject contract from smart planner
+					const taskDefWithContract: TaskDef = {
+						...def,
+						contract: decision?.contracts?.get(def.name) ?? null,
+					};
+
+					const result = await executeTask(taskDefWithContract, worktreePath, {
+						silent: true,
+					});
+
+					if (result.success) {
+						state.tasks[def.name].status = "done";
+						state.tasks[def.name].completedAt = new Date().toISOString();
+						addHistoryEntry(state, "task.done", { task: def.name });
+						logSuccess(`  ${def.name}: completed`);
+					} else {
+						state.tasks[def.name].status = "failed";
+						addHistoryEntry(state, "task.failed", {
+							task: def.name,
+						});
+						logError(
+							`  ${def.name}: failed — ${result.error || `exit ${result.exitCode}`}`,
+						);
+					}
+
+					saveState(root, state);
+					return {
+						name: def.name,
+						success: result.success,
+						exitCode: result.exitCode,
+						error: result.error,
+					};
+				},
+			);
+
+			// Decide parallel vs serial execution for this substage
+			let execResults: ExecResult[];
+			const canRunParallel =
+				stageStrategy !== "serial" && stageTasks.length > 1;
+			if (canRunParallel) {
+				execResults = await Promise.all(execPromises);
+			} else {
+				execResults = [];
+				for (const p of execPromises) {
+					execResults.push(await p);
+				}
+			}
+
+			// Check for failures
+			const failures = execResults.filter((r) => !r.success);
+			if (failures.length > 0) {
+				logError(`Stage ${i + 1} failed. Halting workflow.`);
+				results.push(...execResults);
+				break;
+			}
+
+			// Run crag gates if available
+			if (governance) {
+				for (const { def, worktreePath } of stageTasks) {
+					const gateResult = runGates(governance, worktreePath);
+					if (!gateResult.passed) {
+						logError(`Gate failed for "${def.name}". Halting workflow.`);
+						process.exit(1);
+					}
+				}
+				logSuccess("  Gates passed");
+			}
+
+			// Merge each task
+			for (const { def } of stageTasks) {
+				const mergeResult = mergeWorktree(def.name, baseBranch, root);
+				if (mergeResult.success) {
+					state.tasks[def.name].status = "merged";
+					state.tasks[def.name].mergedAt = new Date().toISOString();
+					releaseLocks(state, def.name);
+					removeWorktree(def.name, root);
+					addHistoryEntry(state, "task.merged", { task: def.name });
+					logSuccess(`  ${def.name}: merged`);
+				} else {
+					logError(
+						`  ${def.name}: merge conflict — ${mergeResult.conflicts.join(", ")}`,
+					);
 					process.exit(1);
 				}
 			}
-			logSuccess("  Gates passed");
-		}
 
-		// Merge each task
-		for (const { def } of stageTasks) {
-			const mergeResult = mergeWorktree(def.name, baseBranch, root);
-			if (mergeResult.success) {
-				state.tasks[def.name].status = "merged";
-				state.tasks[def.name].mergedAt = new Date().toISOString();
-				releaseLocks(state, def.name);
-				removeWorktree(def.name, root);
-				addHistoryEntry(state, "task.merged", { task: def.name });
-				logSuccess(`  ${def.name}: merged`);
-			} else {
-				logError(
-					`  ${def.name}: merge conflict — ${mergeResult.conflicts.join(", ")}`,
-				);
-				process.exit(1);
-			}
+			saveState(root, state);
+			results.push(...execResults);
 		}
-
-		saveState(root, state);
-		results.push(...execResults);
 	}
 
 	console.log("");
@@ -276,7 +328,7 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 	}
 }
 
-function workflowPlan(args: ParsedArgs, _root: string): void {
+function workflowPlan(args: ParsedArgs, root: string): void {
 	const file = args._[2];
 	if (!file) {
 		logError("Missing workflow file. Usage: ruah workflow plan <file.md>");
@@ -328,6 +380,50 @@ function workflowPlan(args: ParsedArgs, _root: string): void {
 			logInfo(
 				`  Prompt: ${task.prompt.slice(0, 80)}${task.prompt.length > 80 ? "..." : ""}`,
 			);
+	}
+
+	// Smart planner overlap analysis
+	if (workflow.config.parallel) {
+		console.log("");
+		log(heading("Overlap Analysis"));
+		const smartPlan = createSmartPlan(plan, root);
+
+		if (smartPlan.overlaps.length === 0) {
+			logSuccess("No file overlaps — all stages safe to parallelize");
+		} else {
+			logWarn(`${smartPlan.overlaps.length} overlap(s) detected:`);
+			for (const overlap of smartPlan.overlaps) {
+				logWarn(
+					`  ${overlap.taskA} ↔ ${overlap.taskB}: ${overlap.overlappingPatterns.join(", ")} (ratio: ${overlap.overlapRatio.toFixed(2)}, risk: ${overlap.riskScore.toFixed(1)})`,
+				);
+			}
+		}
+
+		console.log("");
+		log(heading("Stage Strategies"));
+		for (let i = 0; i < smartPlan.refinedStages.length; i++) {
+			const decision = smartPlan.refinedStages[i];
+			const icon =
+				decision.strategy === "parallel"
+					? "✓"
+					: decision.strategy === "parallel-with-contracts"
+						? "◐"
+						: "⊘";
+			logInfo(
+				`  Stage ${i + 1}: ${icon} ${decision.strategy} — ${decision.reason}`,
+			);
+
+			if (decision.contracts) {
+				for (const [taskName, contract] of decision.contracts) {
+					const owned = contract.owned.length;
+					const shared = contract.sharedAppend.length;
+					const ro = contract.readOnly.length;
+					logInfo(
+						`    ${taskName}: ${owned} owned, ${shared} shared-append, ${ro} read-only`,
+					);
+				}
+			}
+		}
 	}
 }
 
