@@ -11,8 +11,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 
-const CLI = join(import.meta.dirname, "..", "src", "cli.js");
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
+const CLI = join(__dirname, "..", "src", "cli.js");
 
 function ruah(args, cwd) {
 	try {
