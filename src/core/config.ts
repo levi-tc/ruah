@@ -14,6 +14,8 @@ export interface RuahConfig {
 	skipGates?: boolean;
 	/** Parallel execution in workflows */
 	parallel?: boolean;
+	/** Maximum number of tasks to run in parallel per stage (default: 5) */
+	maxParallel?: number;
 }
 
 const EMPTY_CONFIG: RuahConfig = {};
@@ -68,6 +70,8 @@ function validateConfig(raw: unknown): RuahConfig {
 	}
 	if (typeof obj.skipGates === "boolean") config.skipGates = obj.skipGates;
 	if (typeof obj.parallel === "boolean") config.parallel = obj.parallel;
+	if (typeof obj.maxParallel === "number" && obj.maxParallel > 0)
+		config.maxParallel = Math.floor(obj.maxParallel);
 
 	return config;
 }

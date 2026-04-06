@@ -134,4 +134,26 @@ describe("config", () => {
 		const config = loadConfig(root);
 		assert.equal(config.timeout, undefined);
 	});
+
+	it("loads maxParallel from config", () => {
+		writeFileSync(join(root, ".ruahrc"), JSON.stringify({ maxParallel: 3 }));
+		const config = loadConfig(root);
+		assert.equal(config.maxParallel, 3);
+	});
+
+	it("ignores non-positive maxParallel", () => {
+		writeFileSync(join(root, ".ruahrc"), JSON.stringify({ maxParallel: 0 }));
+		const config = loadConfig(root);
+		assert.equal(config.maxParallel, undefined);
+
+		writeFileSync(join(root, ".ruahrc"), JSON.stringify({ maxParallel: -5 }));
+		const config2 = loadConfig(root);
+		assert.equal(config2.maxParallel, undefined);
+	});
+
+	it("floors float maxParallel to integer", () => {
+		writeFileSync(join(root, ".ruahrc"), JSON.stringify({ maxParallel: 3.7 }));
+		const config = loadConfig(root);
+		assert.equal(config.maxParallel, 3);
+	});
 });

@@ -12,6 +12,7 @@ import {
 	decideStageStrategy,
 	estimatePatternRisk,
 	renderContractMarkdown,
+	splitStageByParallelLimit,
 } from "../src/core/planner.js";
 import type { WorkflowTask } from "../src/core/workflow.js";
 
@@ -375,6 +376,25 @@ describe("createSmartPlan", () => {
 		assert.equal(plan.refinedStages[1].strategy, "serial");
 	});
 
+	it("with maxParallel=2 splits a 4-task stage into 2 batches", () => {
+		const stages = [
+			[
+				makeTask("a", ["src/a.ts"]),
+				makeTask("b", ["src/b.ts"]),
+				makeTask("c", ["src/c.ts"]),
+				makeTask("d", ["src/d.ts"]),
+			],
+		];
+		const plan = createSmartPlan(stages, root, 2);
+		// 4 tasks / maxParallel 2 = 2 batches
+		assert.equal(plan.refinedStages.length, 2);
+		assert.equal(plan.refinedStages[0].tasks.length, 2);
+		assert.equal(plan.refinedStages[1].tasks.length, 2);
+		assert.ok(plan.refinedStages[0].reason.includes("batch 1/2"));
+		assert.ok(plan.refinedStages[1].reason.includes("batch 2/2"));
+		assert.ok(plan.refinedStages[0].reason.includes("capped at 2 parallel"));
+	});
+
 	it("single-task stages are always parallel", () => {
 		const stages = [
 			[makeTask("one", ["src/a.ts"])],
@@ -389,6 +409,35 @@ describe("createSmartPlan", () => {
 			assert.equal(stage.strategy, "parallel");
 			assert.equal(stage.reason, "single task");
 		}
+	});
+});
+
+describe("splitStageByParallelLimit", () => {
+	it("splits 7 tasks with limit 3 into [3, 3, 1]", () => {
+		const tasks = Array.from({ length: 7 }, (_, i) =>
+			makeTask(`task-${i}`, [`src/file-${i}.ts`]),
+		);
+		const batches = splitStageByParallelLimit(tasks, 3);
+		assert.equal(batches.length, 3);
+		assert.equal(batches[0].length, 3);
+		assert.equal(batches[1].length, 3);
+		assert.equal(batches[2].length, 1);
+	});
+
+	it("returns single batch when under limit", () => {
+		const tasks = [makeTask("a", ["src/a.ts"]), makeTask("b", ["src/b.ts"])];
+		const batches = splitStageByParallelLimit(tasks, 5);
+		assert.equal(batches.length, 1);
+		assert.equal(batches[0].length, 2);
+	});
+
+	it("returns single batch when exactly at limit", () => {
+		const tasks = Array.from({ length: 3 }, (_, i) =>
+			makeTask(`task-${i}`, [`src/file-${i}.ts`]),
+		);
+		const batches = splitStageByParallelLimit(tasks, 3);
+		assert.equal(batches.length, 1);
+		assert.equal(batches[0].length, 3);
 	});
 });
 
