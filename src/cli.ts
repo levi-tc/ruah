@@ -21,6 +21,7 @@ Usage:
   ruah clean [--dry-run] [--force]  Clean stale tasks and orphaned locks
   ruah config            Show resolved configuration
   ruah status [--json]
+  ruah demo [--fast]     Interactive demo — see ruah in action
 
 Task subcommands:
   create <name>  Create a task with isolated worktree
@@ -150,6 +151,11 @@ async function main(): Promise<void> {
 			}
 			case "status": {
 				const { run } = await import("./commands/status.js");
+				await run(args);
+				break;
+			}
+			case "demo": {
+				const { run } = await import("./commands/demo.js");
 				await run(args);
 				break;
 			}
