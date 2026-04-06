@@ -1,0 +1,26 @@
+# Run on PRs — fast feedback before merge
+name: PR Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - run: npm ci
+
+      - name: Lint
+        run: npx @biomejs/biome check .
+
+      - name: Test
+        run: node --test test/*.test.js

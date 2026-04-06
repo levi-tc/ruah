@@ -30,8 +30,8 @@
 
 ## Deployment
 - Target: npm publish (@levi-tc/ruah)
-- CI: none (planned)
-- Strategy: npm version + publish
+- CI: GitHub Actions (gates.yml, pr-check.yml, release.yml)
+- Strategy: npm version patch/minor/major → git push --tags → auto-publish
 
 ## Conventions
 - Node.js ESM (type: module)

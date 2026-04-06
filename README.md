@@ -34,11 +34,11 @@ ruah task merge auth
 ruah workflow run .ruah/workflows/feature.md
 ```
 
-## Concepts
+## Features
 
-### Tasks
+### Task Lifecycle
 
-A task is a unit of work with an isolated git worktree and branch. Each task can lock files to prevent other tasks from editing the same areas.
+Full lifecycle management with git worktree isolation per task.
 
 ```
 created → in-progress → done → merged
@@ -47,9 +47,14 @@ created → in-progress → done → merged
    └→ cancelled
 ```
 
-### Workflows
+- Each task gets its own branch and worktree — zero interference between agents
+- Advisory file locks prevent two tasks from editing the same files
+- Cascading cancel: cancelling a parent cancels all subtasks
+- JSON output on every command for programmatic consumption
 
-Markdown files that define a DAG of tasks with dependencies:
+### Workflow Engine
+
+Markdown files define a DAG of tasks with dependencies. Independent tasks run in parallel, dependent tasks wait for their prerequisites.
 
 ```markdown
 # Workflow: new-feature
@@ -82,11 +87,11 @@ Markdown files that define a DAG of tasks with dependencies:
     Write integration tests.
 ```
 
-Independent tasks run in parallel. Dependent tasks wait for their prerequisites.
+The DAG is validated (cycle detection, missing dependency checks) before execution.
 
 ### File Locks
 
-Advisory locks checked at task creation. If two tasks try to lock overlapping file patterns, the second is rejected:
+Advisory locks checked at task creation. Overlapping file patterns are rejected:
 
 ```bash
 ruah task create auth --files "src/auth/**"   # ✓
@@ -94,9 +99,11 @@ ruah task create login --files "src/auth/**"  # ✗ conflict
 ruah task create api --files "src/api/**"     # ✓ no overlap
 ```
 
-### Executors
+Glob-based pattern matching with directory containment detection.
 
-Built-in adapters for common AI agents:
+### Executor Adapters
+
+Built-in adapters for common AI coding agents:
 
 | Executor | Tool |
 |----------|------|
@@ -113,7 +120,7 @@ Unknown executor names are treated as raw shell commands.
 Any agent running inside a task can spawn subtasks. Subtasks get their own worktrees, branched from the parent's branch — not from base.
 
 ```bash
-# Parent creates a subtask (from within a running agent's CLI)
+# Parent creates subtasks (from within a running agent's CLI)
 ruah task create auth-api --parent auth --files "src/auth/api/**" --executor codex --prompt "Build auth API"
 ruah task create auth-ui --parent auth --files "src/auth/ui/**" --executor aider --prompt "Build auth UI"
 
@@ -125,7 +132,7 @@ ruah task start auth-ui
 ruah task done auth-api && ruah task merge auth-api
 ruah task done auth-ui && ruah task merge auth-ui
 
-# Now parent can merge into base (all children must be merged first)
+# Parent merges into base (all children must be merged first)
 ruah task done auth && ruah task merge auth
 ```
 
@@ -134,11 +141,24 @@ ruah task done auth && ruah task merge auth
 - Subtask file locks must be within the parent's lock scope
 - Subtask merges go into the parent branch (gates deferred to parent merge)
 - Parent merge is blocked until all children are merged or cancelled
-- Cancelling a parent cascades to all children
 - Each executor receives env vars: `RUAH_TASK`, `RUAH_PARENT_TASK`, `RUAH_ROOT`, `RUAH_FILES`, `RUAH_WORKTREE`
 - A `.ruah-task.md` is written into each worktree with subtask spawning instructions
 
 **Works with any CLI** — the env vars and task file are executor-agnostic. Claude Code, Codex, Aider, OpenCode, or any custom script can read them and call `ruah task create --parent $RUAH_TASK`.
+
+### crag Integration
+
+Auto-detects crag by looking for `.claude/governance.md`. When found, gates are enforced on `task merge` and `workflow run`:
+
+- **MANDATORY** gates block the merge on failure
+- **OPTIONAL** gates warn but continue
+- **ADVISORY** gates log results only
+
+Use `--skip-gates` for emergencies.
+
+### arhy Integration
+
+Detects `.arhy` contract files for system boundary definitions. Used for inferring file lock boundaries from entity contracts.
 
 ## CLI Reference
 
@@ -159,21 +179,39 @@ ruah status [--json]
 
 Every command supports `--json` for programmatic consumption by agents.
 
-## crag Integration
+## Roadmap
 
-ruah auto-detects crag by looking for `.claude/governance.md`. When found, gates are enforced on `task merge` and `workflow run`:
+Planned features for upcoming releases:
 
-- **MANDATORY** gates block the merge on failure
-- **OPTIONAL** gates warn but continue
-- **ADVISORY** gates log results only
+- [ ] **Task retry** — `ruah task retry <name>` to re-execute failed tasks without recreating worktrees
+- [ ] **Task logs** — `ruah task log <name>` to view execution output from completed/failed tasks
+- [ ] **Watch mode** — `ruah watch` for live task status dashboard in the terminal
+- [ ] **Task timeouts** — TTL per task with configurable auto-cancel on expiry
+- [ ] **Webhook notifications** — notify external services (Slack, Discord, n8n) on task state changes
+- [ ] **Config file** — `.ruahrc` or `package.json` `"ruah"` section for project defaults (base branch, default executor, timeout)
+- [ ] **Plugin executors** — user-defined executor adapters loaded from config
+- [ ] **Conflict resolution strategies** — configurable merge conflict handling (fail, ours, manual)
+- [ ] **Task priority** — weighted scheduling within workflow stages
+- [ ] **Workflow templates** — `ruah workflow create <name>` to scaffold workflow files from templates
 
-Use `--skip-gates` for emergencies.
+## Releasing
+
+Releases are automated via GitHub Actions. To publish a new version:
+
+```bash
+npm version patch   # or minor, major
+git push --tags
+```
+
+This triggers the release pipeline which runs lint + tests, publishes to npm, and creates a GitHub release with auto-generated notes.
+
+> **First-time setup:** Add your npm token as `NPM_TOKEN` in GitHub repo settings → Secrets and variables → Actions.
 
 ## Ecosystem
 
 ```
 crag   = governance + discovery + skills + compilation  (@whitehatd/crag)
-ruah   = multi-agent orchestration                      (@whitehatd/ruah)
+ruah   = multi-agent orchestration                      (@levi-tc/ruah)
 arhy   = system contracts                               (@levi-tc/arhy)
 ```
 
