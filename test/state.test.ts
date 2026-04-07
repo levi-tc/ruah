@@ -112,6 +112,7 @@ describe("file locks", () => {
 	it("acquireLocks succeeds with no conflicts", () => {
 		const state = {
 			locks: {},
+			lockModes: {},
 			lockSnapshots: {},
 		} as unknown as RuahState;
 		const result = acquireLocks(state, "auth", ["src/auth/**"]);
@@ -122,6 +123,7 @@ describe("file locks", () => {
 	it("acquireLocks detects overlapping patterns", () => {
 		const state = {
 			locks: { auth: ["src/auth/**"] },
+			lockModes: { auth: "write" },
 			lockSnapshots: {},
 		} as unknown as RuahState;
 		const result = acquireLocks(state, "api", ["src/auth/**"]);
@@ -133,6 +135,7 @@ describe("file locks", () => {
 	it("acquireLocks allows non-overlapping patterns", () => {
 		const state = {
 			locks: { auth: ["src/auth/**"] },
+			lockModes: { auth: "write" },
 			lockSnapshots: {},
 		} as unknown as RuahState;
 		const result = acquireLocks(state, "api", ["src/api/**"]);
@@ -142,6 +145,7 @@ describe("file locks", () => {
 	it("acquireLocks succeeds with empty patterns", () => {
 		const state = {
 			locks: { auth: ["src/auth/**"] },
+			lockModes: { auth: "write" },
 			lockSnapshots: {},
 		} as unknown as RuahState;
 		const result = acquireLocks(state, "api", []);
@@ -160,6 +164,7 @@ describe("file locks", () => {
 	it("strict locks reject unresolved glob patterns", () => {
 		const state = {
 			locks: {},
+			lockModes: {},
 			lockSnapshots: {},
 		} as unknown as RuahState;
 		const result = acquireLocks(
@@ -180,6 +185,7 @@ describe("file locks", () => {
 
 		const state = {
 			locks: {},
+			lockModes: {},
 			lockSnapshots: {},
 		} as unknown as RuahState;
 		const result = acquireLocks(state, "auth", ["*.ts"], null, root);
@@ -233,10 +239,99 @@ describe("patternsOverlap", () => {
 	});
 });
 
+describe("read-only locks", () => {
+	it("read-only locks never conflict with write locks", () => {
+		const state = {
+			locks: { writer: ["src/auth/**"] },
+			lockModes: { writer: "write" },
+			lockSnapshots: {},
+		} as unknown as RuahState;
+		const result = acquireLocks(
+			state, "reader", ["src/auth/**"], null, undefined, false, "read",
+		);
+		assert.ok(result.success);
+	});
+
+	it("read-only locks never conflict with other read-only locks", () => {
+		const state = {
+			locks: { reader1: ["src/**"] },
+			lockModes: { reader1: "read" },
+			lockSnapshots: {},
+		} as unknown as RuahState;
+		const result = acquireLocks(
+			state, "reader2", ["src/**"], null, undefined, false, "read",
+		);
+		assert.ok(result.success);
+	});
+
+	it("write locks do not conflict with existing read-only locks", () => {
+		const state = {
+			locks: { reader: ["src/auth/**"] },
+			lockModes: { reader: "read" },
+			lockSnapshots: {},
+		} as unknown as RuahState;
+		const result = acquireLocks(
+			state, "writer", ["src/auth/**"], null, undefined, false, "write",
+		);
+		assert.ok(result.success);
+	});
+
+	it("write locks still conflict with other write locks", () => {
+		const state = {
+			locks: { writer1: ["src/auth/**"] },
+			lockModes: { writer1: "write" },
+			lockSnapshots: {},
+		} as unknown as RuahState;
+		const result = acquireLocks(
+			state, "writer2", ["src/auth/**"], null, undefined, false, "write",
+		);
+		assert.ok(!result.success);
+		assert.equal(result.conflicts.length, 1);
+	});
+
+	it("lockModes defaults to write when absent (backward compat)", () => {
+		const state = {
+			locks: { legacy: ["src/**"] },
+			lockModes: {},
+			lockSnapshots: {},
+		} as unknown as RuahState;
+		const result = acquireLocks(
+			state, "new-writer", ["src/**"], null, undefined, false, "write",
+		);
+		assert.ok(!result.success);
+	});
+
+	it("releaseLocks cleans up lockModes", () => {
+		const state = {
+			locks: { task: ["src/**"] },
+			lockModes: { task: "read" },
+			lockSnapshots: {},
+		} as unknown as RuahState;
+		releaseLocks(state, "task");
+		assert.equal(state.lockModes.task, undefined);
+	});
+
+	it("multiple read-only tasks on same files all succeed", () => {
+		const state = {
+			locks: {},
+			lockModes: {},
+			lockSnapshots: {},
+		} as unknown as RuahState;
+		for (let i = 0; i < 5; i++) {
+			const result = acquireLocks(
+				state, `audit-${i}`, ["src/**"], null, undefined, false, "read",
+			);
+			assert.ok(result.success, `audit-${i} should succeed`);
+		}
+		assert.equal(Object.keys(state.locks).length, 5);
+	});
+});
+
 describe("subtask state functions", () => {
 	it("acquireLocks validates subtask within parent scope", () => {
 		const state = {
 			locks: { parent: ["src/auth/**"] },
+			lockModes: { parent: "write" },
 		} as unknown as RuahState;
 		// Within scope — should succeed
 		const ok = acquireLocks(state, "child", ["src/auth/api/**"], "parent");
@@ -249,13 +344,13 @@ describe("subtask state functions", () => {
 	});
 
 	it("acquireLocks allows subtask when parent has no locks", () => {
-		const state = { locks: {} } as unknown as RuahState;
+		const state = { locks: {}, lockModes: {} } as unknown as RuahState;
 		const result = acquireLocks(state, "child", ["src/anything/**"], "parent");
 		assert.ok(result.success);
 	});
 
 	it("subtask does not conflict with parent locks", () => {
-		const state = { locks: { parent: ["src/**"] } } as unknown as RuahState;
+		const state = { locks: { parent: ["src/**"] }, lockModes: { parent: "write" } } as unknown as RuahState;
 		// Subtask within parent's scope should not conflict with parent
 		const result = acquireLocks(state, "child", ["src/auth/**"], "parent");
 		assert.ok(result.success);
@@ -264,6 +359,7 @@ describe("subtask state functions", () => {
 	it("sibling subtasks can conflict", () => {
 		const state = {
 			locks: { parent: ["src/**"], child1: ["src/auth/**"] },
+			lockModes: { parent: "write", child1: "write" },
 		} as unknown as RuahState;
 		const result = acquireLocks(state, "child2", ["src/auth/**"], "parent");
 		assert.ok(!result.success);

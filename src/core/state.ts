@@ -21,6 +21,8 @@ export interface WorkflowRef {
 	depends: string[];
 }
 
+export type LockMode = "read" | "write";
+
 export interface Task {
 	name: string;
 	status: TaskStatus;
@@ -28,6 +30,8 @@ export interface Task {
 	branch: string;
 	worktree: string;
 	files: string[];
+	/** Lock mode — "read" tasks never conflict (snapshot isolation via worktree) */
+	lockMode: LockMode;
 	executor: string | null;
 	prompt: string | null;
 	parent: string | null;
@@ -54,6 +58,8 @@ export interface RuahState {
 	baseBranch: string;
 	tasks: Record<string, Task>;
 	locks: Record<string, string[]>;
+	/** Per-task lock mode: "read" or "write" (absent = "write" for backward compat) */
+	lockModes: Record<string, LockMode>;
 	lockSnapshots: Record<string, Record<string, string[]>>;
 	history: HistoryEntry[];
 }
@@ -83,6 +89,7 @@ function defaultState(): RuahState {
 		baseBranch: "main",
 		tasks: {},
 		locks: {},
+		lockModes: {},
 		lockSnapshots: {},
 		history: [],
 	};
@@ -111,10 +118,13 @@ function sleep(ms: number): void {
 function parseState(raw: string): RuahState {
 	const parsed = JSON.parse(raw) as Partial<RuahState>;
 	const tasks = parsed.tasks || {};
-	// Backfill `depends` for tasks created before dependency tracking
+	// Backfill fields for tasks created before dependency/lockMode tracking
 	for (const task of Object.values(tasks)) {
 		if (!task.depends) {
 			(task as Task).depends = (task as Task).workflow?.depends ?? [];
+		}
+		if (!task.lockMode) {
+			(task as Task).lockMode = "write";
 		}
 	}
 	return {
@@ -123,6 +133,7 @@ function parseState(raw: string): RuahState {
 		revision: typeof parsed.revision === "number" ? parsed.revision : 0,
 		tasks,
 		locks: parsed.locks || {},
+		lockModes: parsed.lockModes || {},
 		lockSnapshots: parsed.lockSnapshots || {},
 		history: parsed.history || [],
 	};
@@ -233,6 +244,7 @@ export function acquireLocks(
 	parentName?: string | null,
 	repoRoot?: string,
 	strict?: boolean,
+	lockMode: LockMode = "write",
 ): LockResult {
 	if (!filePatterns || filePatterns.length === 0) {
 		return { success: true, conflicts: [] };
@@ -284,16 +296,24 @@ export function acquireLocks(
 		}
 	}
 
+	// Read-only tasks never conflict — they operate on a worktree snapshot
+	// and cannot interfere with readers or writers.
+	// Write↔write still conflicts (existing behavior).
 	const conflicts: LockConflict[] = [];
-	for (const [owner, owned] of Object.entries(state.locks)) {
-		if (owner === taskName) continue;
-		// Subtasks of the same parent don't conflict with the parent itself
-		if (parentName && owner === parentName) continue;
-		// Sibling subtasks can conflict with each other
-		for (const existing of owned) {
-			for (const requested of filePatterns) {
-				if (patternsOverlap(existing, requested, repoRoot)) {
-					conflicts.push({ task: owner, pattern: existing, requested });
+	if (lockMode === "write") {
+		for (const [owner, owned] of Object.entries(state.locks)) {
+			if (owner === taskName) continue;
+			// Subtasks of the same parent don't conflict with the parent itself
+			if (parentName && owner === parentName) continue;
+			// Read-only lock holders don't block writers — snapshot isolation
+			const ownerMode = state.lockModes[owner] || "write";
+			if (ownerMode === "read") continue;
+			// Sibling subtasks can conflict with each other
+			for (const existing of owned) {
+				for (const requested of filePatterns) {
+					if (patternsOverlap(existing, requested, repoRoot)) {
+						conflicts.push({ task: owner, pattern: existing, requested });
+					}
 				}
 			}
 		}
@@ -304,6 +324,7 @@ export function acquireLocks(
 	}
 
 	state.locks[taskName] = filePatterns;
+	state.lockModes[taskName] = lockMode;
 	if (repoRoot) {
 		state.lockSnapshots[taskName] = Object.fromEntries(
 			filePatterns.map((pattern) => [
@@ -342,6 +363,9 @@ export function getTaskLineage(state: RuahState, taskName: string): string[] {
 
 export function releaseLocks(state: RuahState, taskName: string): void {
 	delete state.locks[taskName];
+	if (state.lockModes) {
+		delete state.lockModes[taskName];
+	}
 	if (state.lockSnapshots) {
 		delete state.lockSnapshots[taskName];
 	}

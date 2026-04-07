@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.3] - 2026-04-07
+
+### Added
+- **Read-only locks** — `ruah task create audit --files "src/**" --read-only` creates tasks that never conflict with any lock. Read-only tasks get worktree snapshot isolation, so they can safely overlap with readers and writers. This prevents the "bypass ruah with raw agents" escape hatch when dispatching audit/analysis tasks.
+- **`lockMode` field on Task** — `"read" | "write"` (defaults to `"write"`). Tracked in `state.lockModes` for conflict resolution. Backward-compatible — existing tasks default to write.
+
+### Changed
+- **Lock conflict resolution** — `acquireLocks` now checks lock modes: read↔read and read↔write skip conflict checks entirely (snapshot isolation via worktree). Only write↔write still conflicts.
+- **`releaseLocks`** now cleans up `lockModes` alongside `locks` and `lockSnapshots`.
+
 ## [0.4.2] - 2026-04-07
 
 ### Added

@@ -226,6 +226,7 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 					branch: branchName,
 					worktree: worktreePath,
 					files: taskDef.files,
+					lockMode: "write",
 					executor: taskDef.executor,
 					prompt: taskDef.prompt,
 					parent: null,

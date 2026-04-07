@@ -20,6 +20,7 @@ function makeTask(overrides: Partial<Task> & { name: string }): Task {
 		branch: `ruah/${overrides.name}`,
 		worktree: `/tmp/worktrees/${overrides.name}`,
 		files: [],
+		lockMode: "write",
 		executor: null,
 		prompt: null,
 		parent: null,

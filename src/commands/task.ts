@@ -159,6 +159,8 @@ function taskCreate(args: ParsedArgs, root: string): void {
 					.map((d) => d.trim())
 					.filter(Boolean)
 			: [];
+	const readOnly = args.flags["read-only"] === true;
+	const lockMode = readOnly ? ("read" as const) : ("write" as const);
 	const strictLocks =
 		args.flags["strict-locks"] === true || config.strictLocks === true;
 
@@ -211,6 +213,7 @@ function taskCreate(args: ParsedArgs, root: string): void {
 			parentName,
 			root,
 			strictLocks,
+			lockMode,
 		);
 		if (!lockResult.success) {
 			if (lockResult.ambiguous) {
@@ -240,6 +243,7 @@ function taskCreate(args: ParsedArgs, root: string): void {
 		branch: branchName,
 		worktree: worktreePath,
 		files,
+		lockMode,
 		executor,
 		prompt,
 		parent: parentName || null,
@@ -273,7 +277,7 @@ function taskCreate(args: ParsedArgs, root: string): void {
 	log(`Branch: ${branchName}`);
 	log(`Worktree: ${worktreePath}`);
 	if (files.length > 0) {
-		log(`Locked: ${files.join(", ")}`);
+		log(`Locked: ${files.join(", ")}${readOnly ? " (read-only)" : ""}`);
 	}
 	if (executor) logInfo(`Executor: ${executor}`);
 }

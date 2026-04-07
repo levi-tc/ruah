@@ -21,6 +21,7 @@ function makeFailedTask(name: string, root: string): Task {
 		branch: `ruah/${name}`,
 		worktree: join(root, ".ruah", "worktrees", name),
 		files: ["src/auth/**"],
+		lockMode: "write",
 		executor: "script",
 		prompt: "echo hello",
 		parent: null,

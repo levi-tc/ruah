@@ -10,6 +10,7 @@ function makeTask(overrides: Partial<Task> & { name: string }): Task {
 		branch: `ruah/${overrides.name}`,
 		worktree: `/tmp/worktrees/${overrides.name}`,
 		files: [],
+		lockMode: "write",
 		executor: null,
 		prompt: null,
 		parent: null,
@@ -30,6 +31,7 @@ function makeState(tasks: Task[]): RuahState {
 		baseBranch: "main",
 		tasks: Object.fromEntries(tasks.map((t) => [t.name, t])),
 		locks: {},
+		lockModes: {},
 		lockSnapshots: {},
 		history: [],
 	};

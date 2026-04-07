@@ -203,6 +203,7 @@ ruah task create <name> [options]          Create task with isolated worktree
   --prompt <text>                            Instructions for agent
   --parent <task>                            Create as subtask
   --depends <tasks>                          Upstream dependencies (comma-separated)
+  --read-only                                Read-only lock (no conflicts)
 ruah task start <name> [--no-exec] [--dry-run] [--force]
 ruah task done <name>
 ruah task merge <name> [--dry-run] [--skip-gates]
