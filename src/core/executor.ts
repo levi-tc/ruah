@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { autoCommitChanges } from "./git.js";
@@ -9,6 +9,17 @@ interface AdapterResult {
 	command: string;
 	args: string[];
 	shell?: boolean;
+}
+
+export interface RuahClaudeProfile {
+	model: string;
+	effort: string;
+	taskPromptFile: string;
+}
+
+export interface ClaudeCliCapabilities {
+	model: boolean;
+	effort: boolean;
 }
 
 export interface TaskDef {
@@ -120,29 +131,94 @@ req.end();
 }
 
 /**
- * Wrap a user prompt with instructions that ensure the agent commits its work.
- * This is critical when running from within another CC session — without an
- * explicit commit, changes are lost when the worktree is cleaned up.
+ * Keep the CLI prompt small for ruah fan-out workers and point Claude at the
+ * task file that already contains the full instructions and coordination data.
  */
-function wrapPromptForCommit(prompt: string, taskName: string): string {
-	return `${prompt}
+const RUAH_TASK_PROMPT_FILE = ".ruah-task.md";
+const DEFAULT_RUAH_CLAUDE_MODEL = "sonnet";
+const DEFAULT_RUAH_CLAUDE_EFFORT = "low";
+let cachedClaudeCliCapabilities: ClaudeCliCapabilities | null = null;
 
-IMPORTANT: When you are finished, you MUST commit all changes before exiting.
-Run: git add -A && git commit -m "ruah(${taskName}): completed task"
-Do NOT leave uncommitted changes — they will be lost.`;
+function readNonEmptyEnv(name: string): string | undefined {
+	const value = process.env[name]?.trim();
+	return value ? value : undefined;
+}
+
+export function getRuahClaudeProfile(): RuahClaudeProfile {
+	return {
+		model:
+			readNonEmptyEnv("PITH_RUAH_CLAUDE_MODEL") || DEFAULT_RUAH_CLAUDE_MODEL,
+		effort:
+			readNonEmptyEnv("PITH_RUAH_CLAUDE_EFFORT") || DEFAULT_RUAH_CLAUDE_EFFORT,
+		taskPromptFile: RUAH_TASK_PROMPT_FILE,
+	};
+}
+
+export function parseClaudeHelpCapabilities(
+	helpText: string,
+): ClaudeCliCapabilities {
+	return {
+		model: helpText.includes("--model <model>"),
+		effort: helpText.includes("--effort <level>"),
+	};
+}
+
+function getClaudeCliCapabilities(): ClaudeCliCapabilities {
+	if (cachedClaudeCliCapabilities) {
+		return cachedClaudeCliCapabilities;
+	}
+
+	try {
+		const result = spawnSync("claude", ["--help"], {
+			encoding: "utf-8",
+			stdio: "pipe",
+		});
+		const output = `${result.stdout || ""}\n${result.stderr || ""}`;
+		cachedClaudeCliCapabilities = parseClaudeHelpCapabilities(output);
+	} catch {
+		cachedClaudeCliCapabilities = { model: false, effort: false };
+	}
+
+	return cachedClaudeCliCapabilities;
+}
+
+function buildRuahClaudePrompt(taskName: string): string {
+	return [
+		`Read ${RUAH_TASK_PROMPT_FILE} in the current directory for the full task instructions.`,
+		"Stay within the declared file scope and modification contract.",
+		`When you are finished, commit all changes before exiting with: git add -A && git commit -m "ruah(${taskName}): completed task"`,
+		"Do not leave uncommitted changes behind.",
+	].join("\n");
+}
+
+function buildClaudeCodeArgs(taskName: string): string[] {
+	const profile = getRuahClaudeProfile();
+	const capabilities = getClaudeCliCapabilities();
+	const args: string[] = [];
+
+	if (capabilities.model) {
+		args.push("--model", profile.model);
+	}
+	if (capabilities.effort) {
+		args.push("--effort", profile.effort);
+	}
+
+	args.push(
+		"-p",
+		buildRuahClaudePrompt(taskName),
+		"--dangerously-skip-permissions",
+	);
+
+	return args;
 }
 
 const ADAPTERS: Record<
 	string,
 	(prompt: string, taskName?: string) => AdapterResult
 > = {
-	"claude-code": (prompt, taskName) => ({
+	"claude-code": (_prompt, taskName) => ({
 		command: "claude",
-		args: [
-			"-p",
-			wrapPromptForCommit(prompt, taskName || "task"),
-			"--dangerously-skip-permissions",
-		],
+		args: buildClaudeCodeArgs(taskName || "task"),
 	}),
 	aider: (prompt) => ({
 		command: "aider",

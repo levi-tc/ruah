@@ -449,4 +449,50 @@ describe("CLI integration", () => {
 			depends: [],
 		});
 	});
+
+	it("workflow plan applies configured maxParallel batching", () => {
+		ruah("init", repo);
+		writeFileSync(join(repo, ".ruahrc"), JSON.stringify({ maxParallel: 2 }));
+		const workflowPath = join(repo, ".ruah", "workflows", "batched.md");
+		writeFileSync(
+			workflowPath,
+			`# Workflow: Batching Test
+
+## Config
+- base: main
+- parallel: true
+
+## Tasks
+
+### one
+- files: src/one.ts
+- executor: claude-code
+- depends: []
+- prompt: Task one
+
+### two
+- files: src/two.ts
+- executor: claude-code
+- depends: []
+- prompt: Task two
+
+### three
+- files: src/three.ts
+- executor: claude-code
+- depends: []
+- prompt: Task three
+
+### four
+- files: src/four.ts
+- executor: claude-code
+- depends: []
+- prompt: Task four
+`,
+			"utf-8",
+		);
+
+		const out = ruah(`workflow plan ${workflowPath}`, repo);
+		assert.ok(out.includes("batch 1/2 (capped at 2 parallel)"));
+		assert.ok(out.includes("batch 2/2 (capped at 2 parallel)"));
+	});
 });

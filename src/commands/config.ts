@@ -15,6 +15,6 @@ export async function run(_args: ParsedArgs): Promise<void> {
 
 	logInfo("");
 	logInfo(
-		"Config source precedence: .ruahrc, then package.json#ruah, then defaults.",
+		"Config source precedence: .ruahrc, then package.json#ruah, then env overrides, then defaults.",
 	);
 }

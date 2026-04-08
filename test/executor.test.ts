@@ -4,7 +4,11 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { executeTask, getAvailableExecutors } from "../src/core/executor.js";
+import {
+	executeTask,
+	getAvailableExecutors,
+	parseClaudeHelpCapabilities,
+} from "../src/core/executor.js";
 
 function tmpDir(): string {
 	const dir = join(tmpdir(), `ruah-exec-${randomBytes(4).toString("hex")}`);
@@ -117,6 +121,77 @@ describe("executor", () => {
 		assert.ok(result.command?.startsWith("node"));
 
 		delete process.env.CODEX_MCP_URL;
+	});
+
+	it("parses Claude CLI help capabilities", () => {
+		assert.deepEqual(
+			parseClaudeHelpCapabilities(`
+  --effort <level>  Effort level
+  --model <model>   Model for the current session
+`),
+			{ model: true, effort: true },
+		);
+		assert.deepEqual(parseClaudeHelpCapabilities("usage only"), {
+			model: false,
+			effort: false,
+		});
+	});
+
+	it("claude-code dry run uses ruah defaults and task file launcher", async () => {
+		const result = await executeTask(
+			{
+				name: "claude-task",
+				executor: "claude-code",
+				prompt: "Implement auth",
+			},
+			dir,
+			{ dryRun: true },
+		);
+		assert.ok(result.success);
+		assert.ok(result.command?.startsWith("claude --model sonnet --effort low"));
+		assert.ok(result.command?.includes("Read .ruah-task.md"));
+		assert.ok(
+			!result.command?.includes("Implement auth"),
+			"expected the CLI prompt to stay small and refer to .ruah-task.md",
+		);
+
+		const content = readFileSync(join(dir, ".ruah-task.md"), "utf-8");
+		assert.ok(content.includes("Implement auth"));
+	});
+
+	it("claude-code dry run respects ruah env overrides", async () => {
+		const originalModel = process.env.PITH_RUAH_CLAUDE_MODEL;
+		const originalEffort = process.env.PITH_RUAH_CLAUDE_EFFORT;
+
+		process.env.PITH_RUAH_CLAUDE_MODEL = "opus";
+		process.env.PITH_RUAH_CLAUDE_EFFORT = "medium";
+
+		try {
+			const result = await executeTask(
+				{
+					name: "claude-task",
+					executor: "claude-code",
+					prompt: "Implement auth",
+				},
+				dir,
+				{ dryRun: true },
+			);
+			assert.ok(result.success);
+			assert.ok(
+				result.command?.startsWith("claude --model opus --effort medium"),
+			);
+		} finally {
+			if (originalModel === undefined) {
+				delete process.env.PITH_RUAH_CLAUDE_MODEL;
+			} else {
+				process.env.PITH_RUAH_CLAUDE_MODEL = originalModel;
+			}
+			if (originalEffort === undefined) {
+				delete process.env.PITH_RUAH_CLAUDE_EFFORT;
+			} else {
+				process.env.PITH_RUAH_CLAUDE_EFFORT = originalEffort;
+			}
+		}
 	});
 
 	it("executeTask writes contract to .ruah-task.md when provided", async () => {

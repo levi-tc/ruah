@@ -30,18 +30,28 @@ export interface RuahConfig {
 
 const EMPTY_CONFIG: RuahConfig = {};
 
+function parsePositiveIntEnv(name: string): number | undefined {
+	const raw = process.env[name]?.trim();
+	if (!raw) return undefined;
+	const value = Number(raw);
+	if (!Number.isFinite(value) || value <= 0) return undefined;
+	return Math.floor(value);
+}
+
 /**
  * Load config from .ruahrc (JSON) or package.json "ruah" section.
  * .ruahrc takes precedence over package.json.
  * Returns empty config if neither exists.
  */
 export function loadConfig(root: string): RuahConfig {
+	let config = EMPTY_CONFIG;
+
 	// Try .ruahrc first
 	const rcPath = join(root, ".ruahrc");
 	if (existsSync(rcPath)) {
 		try {
 			const raw = readFileSync(rcPath, "utf-8");
-			return validateConfig(JSON.parse(raw));
+			config = validateConfig(JSON.parse(raw));
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : String(err);
 			throw new Error(`Invalid .ruahrc: ${msg}`);
@@ -49,20 +59,27 @@ export function loadConfig(root: string): RuahConfig {
 	}
 
 	// Try package.json "ruah" section
-	const pkgPath = join(root, "package.json");
-	if (existsSync(pkgPath)) {
-		try {
-			const raw = readFileSync(pkgPath, "utf-8");
-			const pkg = JSON.parse(raw);
-			if (pkg.ruah && typeof pkg.ruah === "object") {
-				return validateConfig(pkg.ruah);
+	if (config === EMPTY_CONFIG) {
+		const pkgPath = join(root, "package.json");
+		if (existsSync(pkgPath)) {
+			try {
+				const raw = readFileSync(pkgPath, "utf-8");
+				const pkg = JSON.parse(raw);
+				if (pkg.ruah && typeof pkg.ruah === "object") {
+					config = validateConfig(pkg.ruah);
+				}
+			} catch {
+				// package.json parse error — ignore ruah section
 			}
-		} catch {
-			// package.json parse error — ignore ruah section
 		}
 	}
 
-	return EMPTY_CONFIG;
+	const envMaxParallel = parsePositiveIntEnv("PITH_RUAH_MAX_PARALLEL");
+	if (envMaxParallel !== undefined) {
+		config = { ...config, maxParallel: envMaxParallel };
+	}
+
+	return config;
 }
 
 function validateConfig(raw: unknown): RuahConfig {

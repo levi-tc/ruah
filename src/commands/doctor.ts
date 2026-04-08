@@ -2,7 +2,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import type { ParsedArgs } from "../cli.js";
 import { loadConfig } from "../core/config.js";
-import { getAvailableExecutors } from "../core/executor.js";
+import {
+	getAvailableExecutors,
+	getRuahClaudeProfile,
+} from "../core/executor.js";
 import {
 	getCurrentBranch,
 	getRepoRoot,
@@ -68,12 +71,17 @@ function summarizeExecutors(root: string): CheckResult[] {
 		}
 
 		const missing = commands.filter((command) => !hasCommand(command));
+		const claudeProfile =
+			executor === "claude-code" ? getRuahClaudeProfile() : null;
+		const readyDetails = claudeProfile
+			? `ready (${commands.join(", ")}, model=${claudeProfile.model}, effort=${claudeProfile.effort}, prompt=${claudeProfile.taskPromptFile})`
+			: `ready (${commands.join(", ")})`;
 		return {
 			name: `executor:${executor}`,
 			ok: missing.length === 0,
 			details:
 				missing.length === 0
-					? `ready (${commands.join(", ")})`
+					? readyDetails
 					: `missing command(s): ${missing.join(", ")}`,
 			hint:
 				missing.length > 0

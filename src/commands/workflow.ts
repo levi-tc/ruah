@@ -135,7 +135,7 @@ async function workflowRun(args: ParsedArgs, root: string): Promise<void> {
 	// Smart planner: analyze overlaps and decide parallel/serial per stage
 	let smartPlan: SmartPlan | null = null;
 	if (workflow.config.parallel) {
-		smartPlan = createSmartPlan(plan, root);
+		smartPlan = createSmartPlan(plan, root, config.maxParallel);
 		logInfo(
 			`Planner: ${smartPlan.summary.parallelStages} parallel, ${smartPlan.summary.contractStages} contract, ${smartPlan.summary.serialStages} serial stage(s)`,
 		);
@@ -585,6 +585,7 @@ function workflowPlan(args: ParsedArgs, root: string): void {
 
 	const json = args.flags.json;
 	const workflow = parseWorkflow(file);
+	const config = loadConfig(root);
 	const validation = validateDAG(workflow.tasks);
 
 	if (!validation.valid) {
@@ -634,7 +635,7 @@ function workflowPlan(args: ParsedArgs, root: string): void {
 	if (workflow.config.parallel) {
 		console.log("");
 		log(heading("Overlap Analysis"));
-		const smartPlan = createSmartPlan(plan, root);
+		const smartPlan = createSmartPlan(plan, root, config.maxParallel);
 
 		if (smartPlan.overlaps.length === 0) {
 			logSuccess("No file overlaps — all stages safe to parallelize");

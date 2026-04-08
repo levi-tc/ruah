@@ -157,6 +157,39 @@ describe("config", () => {
 		assert.equal(config.maxParallel, 3);
 	});
 
+	it("env maxParallel overrides file config", () => {
+		const original = process.env.PITH_RUAH_MAX_PARALLEL;
+		writeFileSync(join(root, ".ruahrc"), JSON.stringify({ maxParallel: 3 }));
+		process.env.PITH_RUAH_MAX_PARALLEL = "2";
+
+		try {
+			const config = loadConfig(root);
+			assert.equal(config.maxParallel, 2);
+		} finally {
+			if (original === undefined) {
+				delete process.env.PITH_RUAH_MAX_PARALLEL;
+			} else {
+				process.env.PITH_RUAH_MAX_PARALLEL = original;
+			}
+		}
+	});
+
+	it("ignores invalid env maxParallel", () => {
+		const original = process.env.PITH_RUAH_MAX_PARALLEL;
+		process.env.PITH_RUAH_MAX_PARALLEL = "abc";
+
+		try {
+			const config = loadConfig(root);
+			assert.equal(config.maxParallel, undefined);
+		} finally {
+			if (original === undefined) {
+				delete process.env.PITH_RUAH_MAX_PARALLEL;
+			} else {
+				process.env.PITH_RUAH_MAX_PARALLEL = original;
+			}
+		}
+	});
+
 	it("loads strictLocks from config", () => {
 		writeFileSync(join(root, ".ruahrc"), JSON.stringify({ strictLocks: true }));
 		const config = loadConfig(root);
