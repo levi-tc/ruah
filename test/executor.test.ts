@@ -10,7 +10,6 @@ import {
 	parseClaudeHelpCapabilities,
 } from "../src/core/executor.js";
 
-
 function tmpDir(): string {
 	const dir = join(tmpdir(), `ruah-exec-${randomBytes(4).toString("hex")}`);
 	mkdirSync(dir, { recursive: true });
