@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 
 import { checkForUpdate, formatUpdateBanner } from "./core/update-notifier.js";
-import { label, logError } from "./utils/format.js";
+import {
+	formatTopLevelCliNotice,
+	getPreferredOrchCommand,
+} from "./core/top-level-cli.js";
+import { logError } from "./utils/format.js";
 import { VERSION } from "./version.js";
 
 export interface ParsedArgs {
@@ -9,19 +13,22 @@ export interface ParsedArgs {
 	flags: Record<string, string | boolean>;
 }
 
-const HELP = `
-${label()} — multi-agent orchestration
+function buildHelp(): string {
+	const command = getPreferredOrchCommand();
+
+	return `
+${command} — multi-agent orchestration
 
 Usage:
-  ruah init [--force]
-  ruah task <subcommand> [options]
-  ruah workflow <subcommand> [options]
-  ruah setup [--force]
-  ruah clean [--dry-run] [--force]  Clean stale tasks and orphaned locks
-  ruah config            Show resolved configuration
-  ruah doctor [--json]   Validate git, ruah state, locks, and executors
-  ruah status [--json]
-  ruah demo [--fast]     Interactive demo — see ruah in action
+  ${command} init [--force]
+  ${command} task <subcommand> [options]
+  ${command} workflow <subcommand> [options]
+  ${command} setup [--force]
+  ${command} clean [--dry-run] [--force]  Clean stale tasks and orphaned locks
+  ${command} config            Show resolved configuration
+  ${command} doctor [--json]   Validate git, ruah state, locks, and executors
+  ${command} status [--json]
+  ${command} demo [--fast]     Interactive demo — see ruah in action
 
 Task subcommands:
   create <name>  Create a task with isolated worktree
@@ -73,6 +80,10 @@ Options:
   --help, -h     Show this help
   --version, -v  Show version
 
+CLI:
+  ${formatTopLevelCliNotice()}
+  Standalone binary: ruah-orch
+
 Smart planner:
   When workflows use parallel: true, ruah analyzes file overlaps
   and decides per-stage: parallel, parallel-with-contracts, or serial.
@@ -84,6 +95,7 @@ crag integration:
   enforces quality gates before merging task branches.
   No configuration needed — just have crag set up.
 `;
+}
 
 export function parseArgs(argv: string[]): ParsedArgs {
 	const args: ParsedArgs = { _: [], flags: {} };
@@ -113,19 +125,19 @@ async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
 
 	if (args.flags.help || args.flags.h) {
-		console.log(HELP.trim());
+		console.log(buildHelp().trim());
 		return;
 	}
 
 	if (args.flags.version || args.flags.v) {
-		console.log(`ruah ${VERSION}`);
+		console.log(`ruah-orch ${VERSION}`);
 		return;
 	}
 
 	const command = args._[0];
 
 	if (!command) {
-		console.log(HELP.trim());
+		console.log(buildHelp().trim());
 		return;
 	}
 
@@ -178,7 +190,7 @@ async function main(): Promise<void> {
 			}
 			default:
 				logError(`Unknown command: ${command}`);
-				console.log(`Run ${label()} --help for usage`);
+				console.log(`Run ${getPreferredOrchCommand()} --help for usage`);
 				process.exit(1);
 		}
 	} catch (err: unknown) {

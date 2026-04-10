@@ -83,12 +83,12 @@ describe("CLI integration", () => {
 	it("--help prints usage", () => {
 		const out = ruah("--help", repo);
 		assert.ok(out.includes("multi-agent orchestration"));
-		assert.ok(out.includes("ruah init"));
+		assert.ok(out.includes("init [--force]"));
 	});
 
 	it("--version prints version", () => {
 		const out = ruah("--version", repo);
-		assert.ok(out.includes(`ruah ${PACKAGE_VERSION}`));
+		assert.ok(out.includes(`ruah-orch ${PACKAGE_VERSION}`));
 	});
 
 	it("init creates .ruah directory structure", () => {

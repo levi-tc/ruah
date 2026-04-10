@@ -32,7 +32,7 @@ Zero runtime dependencies. Works with Claude Code, Aider, Codex, Cursor, Windsur
 ## See It
 
 ```bash
-npx @ruah-dev/orch demo
+npx @ruah-dev/cli demo
 ```
 
 <p align="center">
@@ -45,7 +45,7 @@ Creates a temp repo, shows worktree isolation, file locking, conflict detection,
 
 ```bash
 # Initialize in any git repo
-npx @ruah-dev/orch init
+npx @ruah-dev/cli init
 
 # Create isolated tasks with file locks
 ruah task create auth --files "src/auth/**" --executor claude-code --prompt "Add authentication"
@@ -284,12 +284,16 @@ Every command supports `--json` for programmatic consumption.
 Stable release:
 
 ```bash
-npm install -g @ruah-dev/orch
+npm install -g @ruah-dev/cli
 ```
 
-Or run without installing:
+Standalone package:
 
 ```bash
+npm install -g @ruah-dev/orch
+ruah-orch <command>
+
+# or run without installing
 npx @ruah-dev/orch <command>
 ```
 
@@ -299,7 +303,8 @@ npx @ruah-dev/orch <command>
 
 ```
 crag  — governance, discovery, skills, compilation    (@whitehatd/crag)
-ruah  — multi-agent orchestration                     (@ruah-dev/orch)
+ruah  — top-level CLI router                          (@ruah-dev/cli)
+orch  — multi-agent orchestration                     (@ruah-dev/orch)
 ```
 
 ## Community

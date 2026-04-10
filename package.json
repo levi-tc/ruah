@@ -1,19 +1,25 @@
 {
 	"name": "@ruah-dev/orch",
-	"version": "1.0.3",
+	"version": "1.0.4",
 	"description": "Multi-agent orchestration engine with workspace providers, claims, artifacts, compatibility planning, and merge coordination.",
 	"type": "module",
 	"bin": {
-		"ruah": "dist/cli.js"
+		"ruah-orch": "dist/cli.js"
+	},
+	"ruah": {
+		"namespace": "orch",
+		"description": "Multi-agent orchestration"
 	},
 	"files": [
 		"dist/",
+		"postinstall.mjs",
 		"LICENSE",
 		"README.md"
 	],
 	"scripts": {
 		"build": "tsc && chmod +x dist/cli.js",
 		"dev": "tsc --watch",
+		"postinstall": "node postinstall.mjs",
 		"start": "node dist/cli.js",
 		"pretest": "tsc -p tsconfig.test.json",
 		"test": "node --test dist-test/test/*.test.js",
@@ -54,6 +60,9 @@
 	"homepage": "https://github.com/ruah-dev/ruah-orch#readme",
 	"engines": {
 		"node": ">=18.0.0"
+	},
+	"peerDependencies": {
+		"@ruah-dev/cli": ">=1.0.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.10",

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { get } from "node:https";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { getUpdateInstallCommand } from "./top-level-cli.js";
 
 const PACKAGE_NAME = "@ruah-dev/orch";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -122,13 +123,12 @@ export function formatUpdateBanner(info: UpdateInfo): string {
 	const bold = "\x1b[1m";
 	const dim = "\x1b[2m";
 	const reset = "\x1b[0m";
+	const installCommand = getUpdateInstallCommand();
 
 	return [
 		"",
-		`${yellow}╭──────────────────────────────────────────╮${reset}`,
-		`${yellow}│${reset}  Update available: ${dim}${info.currentVersion}${reset} → ${bold}${cyan}${info.latestVersion}${reset}${" ".repeat(Math.max(0, 18 - info.currentVersion.length - info.latestVersion.length))}${yellow}│${reset}`,
-		`${yellow}│${reset}  Run ${cyan}npm install -g @ruah-dev/orch${reset}       ${yellow}│${reset}`,
-		`${yellow}╰──────────────────────────────────────────╯${reset}`,
+		`${yellow}Update available${reset}: ${dim}${info.currentVersion}${reset} → ${bold}${cyan}${info.latestVersion}${reset}`,
+		`${yellow}Install${reset}: ${cyan}${installCommand}${reset}`,
 		"",
 	].join("\n");
 }
