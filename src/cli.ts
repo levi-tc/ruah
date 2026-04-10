@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
-import { checkForUpdate, formatUpdateBanner } from "./core/update-notifier.js";
 import {
 	formatTopLevelCliNotice,
 	getPreferredOrchCommand,
 } from "./core/top-level-cli.js";
+import { checkForUpdate, formatUpdateBanner } from "./core/update-notifier.js";
 import { logError } from "./utils/format.js";
 import { VERSION } from "./version.js";
 
