@@ -1,0 +1,85 @@
+name: Release Core
+
+on:
+  push:
+    tags:
+      - 'core-v*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  test-core:
+    name: Typecheck, Lint & Test Core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - run: npm ci
+        working-directory: packages/core
+
+      - name: Typecheck
+        run: npm run typecheck
+        working-directory: packages/core
+
+      - name: Lint
+        run: npm run lint
+        working-directory: packages/core
+
+      - name: Test
+        run: npm test
+        working-directory: packages/core
+
+  publish-core:
+    name: Publish Core to npm
+    needs: test-core
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+        working-directory: packages/core
+
+      - name: Build
+        run: npm run build
+        working-directory: packages/core
+
+      - name: Publish with provenance
+        run: npm publish --access public --provenance
+        working-directory: packages/core
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  github-release:
+    name: GitHub Release
+    needs: publish-core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG" \
+            --title "ruah orch core $TAG" \
+            --generate-notes \
+            --verify-tag

@@ -1,0 +1,22 @@
+# Pre-commit hooks
+repos:
+  - repo: local
+    hooks:
+      - id: gate-1
+        name: "lint & format: npx @biomejs/biome check --write ."
+        entry: bash -c 'npx @biomejs/biome check --write .'
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: gate-2
+        name: "lint & format: npx @biomejs/biome check ."
+        entry: bash -c 'npx @biomejs/biome check .'
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: gate-3
+        name: "test: node --test test/*.test.js"
+        entry: bash -c 'node --test test/*.test.js'
+        language: system
+        pass_filenames: false
+        always_run: true

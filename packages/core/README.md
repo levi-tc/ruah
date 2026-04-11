@@ -287,12 +287,14 @@ Stable release:
 npm install -g @ruah-dev/cli
 ```
 
-Direct namespace installer:
+Standalone package:
 
 ```bash
 npm install -g @ruah-dev/orch
-ruah task <subcommand>
-ruah workflow <subcommand>
+ruah-orch <command>
+
+# or run without installing
+npx @ruah-dev/orch <command>
 ```
 
 **Requirements:** Node.js 18+, Git. Zero runtime dependencies.
@@ -300,9 +302,8 @@ ruah workflow <subcommand>
 ## Ecosystem
 
 ```
-ruah       — top-level CLI router                    (@ruah-dev/cli)
-orch       — thin installer for the orch namespace   (@ruah-dev/orch)
-orch-core  — orchestration implementation            (@ruah-dev/orch-core)
+ruah  — top-level CLI router                          (@ruah-dev/cli)
+orch  — multi-agent orchestration                     (@ruah-dev/orch)
 conv  — API spec → agent tool surfaces                (@ruah-dev/conv)
 ```
 

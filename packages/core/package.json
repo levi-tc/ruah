@@ -1,0 +1,64 @@
+{
+	"name": "@ruah-dev/orch-core",
+	"version": "1.1.0",
+	"description": "Core implementation for ruah orchestration: workspace providers, claims, artifacts, compatibility planning, and merge coordination.",
+	"type": "module",
+	"ruah": {
+		"namespace": "orch",
+		"description": "Multi-agent orchestration"
+	},
+	"files": [
+		"dist/",
+		"LICENSE",
+		"README.md"
+	],
+	"scripts": {
+		"build": "tsc && chmod +x dist/cli.js",
+		"dev": "tsc --watch",
+		"prepare": "npm run build",
+		"start": "node dist/cli.js",
+		"pretest": "tsc -p tsconfig.test.json",
+		"test": "node --test dist-test/test/*.test.js",
+		"lint": "biome check . --config-path ./biome.core.json",
+		"format": "biome check --write . --config-path ./biome.core.json",
+		"typecheck": "tsc --noEmit",
+		"clean": "rm -rf dist dist-test",
+		"prepublishOnly": "npm run clean && npm run build && npm test"
+	},
+	"keywords": [
+		"ai",
+		"agents",
+		"orchestration",
+		"multi-agent",
+		"claude-code",
+		"codex",
+		"aider",
+		"worktree",
+		"artifacts",
+		"claims",
+		"compatibility",
+		"workflow",
+		"subagent"
+	],
+	"author": "ruah-dev",
+	"license": "MIT",
+	"publishConfig": {
+		"access": "public"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/ruah-dev/ruah-orch.git"
+	},
+	"bugs": {
+		"url": "https://github.com/ruah-dev/ruah-orch/issues"
+	},
+	"homepage": "https://github.com/ruah-dev/ruah-orch#readme",
+	"engines": {
+		"node": ">=18.0.0"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.10",
+		"@types/node": "^25.5.2",
+		"typescript": "^6.0.2"
+	}
+}

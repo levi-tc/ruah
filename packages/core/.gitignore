@@ -1,0 +1,12 @@
+node_modules/
+dist/
+dist-test/
+.claude/settings.local.json
+.claude/.discovery-cache.json
+.claude/.session-state.json
+.claude/.session-name
+.claude/.tmp/
+.claude/.gates-passed
+.claude/.last-audit
+*.tgz
+reddit/

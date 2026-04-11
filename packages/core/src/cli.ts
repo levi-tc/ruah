@@ -82,7 +82,6 @@ Options:
 
 CLI:
   ${formatTopLevelCliNotice()}
-  Standalone binary: ruah-orch
 
 Smart planner:
   When workflows use parallel: true, ruah analyzes file overlaps
@@ -130,7 +129,7 @@ async function main(): Promise<void> {
 	}
 
 	if (args.flags.version || args.flags.v) {
-		console.log(`ruah-orch ${VERSION}`);
+		console.log(`ruah orch ${VERSION}`);
 		return;
 	}
 

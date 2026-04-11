@@ -17,6 +17,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: ruah-orch
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ruah-dev/ruah-cli
+          path: ruah-cli
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,15 +31,25 @@ jobs:
           node-version: '20'
 
       - run: npm ci
+        working-directory: ruah-orch/packages/core
+
+      - run: npm ci
+        working-directory: ruah-cli
+
+      - run: npm ci
+        working-directory: ruah-orch
 
       - name: Typecheck
         run: npx tsc --noEmit
+        working-directory: ruah-orch/packages/core
 
       - name: Lint
-        run: npx biome check .
+        run: npm run lint
+        working-directory: ruah-orch
 
       - name: Test
         run: npm test
+        working-directory: ruah-orch
 
   publish-npm:
     name: Publish to npm
@@ -43,6 +60,13 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: ruah-orch
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ruah-dev/ruah-cli
+          path: ruah-cli
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -51,9 +75,39 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - run: npm ci
+        working-directory: ruah-orch/packages/core
 
-      - name: Build
-        run: npm run build
+      - run: npm ci
+        working-directory: ruah-cli
+
+      - run: npm ci
+        working-directory: ruah-orch
+
+      - name: Wait for cli package to be visible
+        run: |
+          CLI_VERSION="$(node -p "require('../ruah-cli/package.json').version")"
+          for attempt in {1..20}; do
+            if npm view "@ruah-dev/cli@$CLI_VERSION" version >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Timed out waiting for @ruah-dev/cli@$CLI_VERSION to be available on npm."
+          exit 1
+        working-directory: ruah-orch
+
+      - name: Rewrite root manifest for registry publish
+        run: |
+          CLI_VERSION="$(node -p "require('../ruah-cli/package.json').version")"
+          CORE_VERSION="$(node -p "require('./packages/core/package.json').version")"
+          CLI_VERSION="$CLI_VERSION" CORE_VERSION="$CORE_VERSION" node <<'EOF'
+          const fs = require("node:fs");
+          const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          packageJson.dependencies["@ruah-dev/cli"] = `^${process.env.CLI_VERSION}`;
+          packageJson.dependencies["@ruah-dev/orch-core"] = `^${process.env.CORE_VERSION}`;
+          fs.writeFileSync("package.json", JSON.stringify(packageJson, null, "\t") + "\n");
+          EOF
+        working-directory: ruah-orch
 
       - name: Determine npm dist-tag
         id: npm-tag
@@ -65,9 +119,11 @@ jobs:
           else
             echo "dist_tag=latest" >> "$GITHUB_OUTPUT"
           fi
+        working-directory: ruah-orch
 
       - name: Publish with provenance
         run: npm publish --access public --provenance --tag "${{ steps.npm-tag.outputs.dist_tag }}"
+        working-directory: ruah-orch
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -78,6 +134,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          path: ruah-orch
           fetch-depth: 0
 
       - name: Extract version info
@@ -106,3 +163,4 @@ jobs:
             --notes-start-tag "$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo '')" \
             $PRERELEASE_FLAG \
             --verify-tag
+        working-directory: ruah-orch

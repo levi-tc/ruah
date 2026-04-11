@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { getUpdateInstallCommand } from "./top-level-cli.js";
 
-const PACKAGE_NAME = "@ruah-dev/orch";
+const PACKAGE_NAME = "@ruah-dev/orch-core";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const CACHE_DIR = join(homedir(), ".ruah");
 const CACHE_FILE = join(CACHE_DIR, "update-check.json");

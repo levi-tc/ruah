@@ -88,7 +88,7 @@ describe("CLI integration", () => {
 
 	it("--version prints version", () => {
 		const out = ruah("--version", repo);
-		assert.ok(out.includes(`ruah-orch ${PACKAGE_VERSION}`));
+		assert.ok(out.includes(`ruah orch ${PACKAGE_VERSION}`));
 	});
 
 	it("init creates .ruah directory structure", () => {

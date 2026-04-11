@@ -1,33 +1,20 @@
 {
 	"name": "@ruah-dev/orch",
-	"version": "1.0.5",
-	"description": "Multi-agent orchestration engine with workspace providers, claims, artifacts, compatibility planning, and merge coordination.",
+	"version": "1.1.0",
+	"description": "Thin installer for ruah orchestration. Installs the top-level CLI and orch core package.",
 	"type": "module",
-	"bin": {
-		"ruah-orch": "dist/cli.js"
-	},
-	"ruah": {
-		"namespace": "orch",
-		"description": "Multi-agent orchestration"
-	},
 	"files": [
-		"dist/",
 		"postinstall.mjs",
+		"test/",
 		"LICENSE",
 		"README.md"
 	],
 	"scripts": {
-		"build": "tsc && chmod +x dist/cli.js",
-		"dev": "tsc --watch",
 		"postinstall": "node postinstall.mjs",
-		"start": "node dist/cli.js",
-		"pretest": "tsc -p tsconfig.test.json",
-		"test": "node --test dist-test/test/*.test.js",
-		"lint": "biome check .",
-		"format": "biome check --write .",
-		"typecheck": "tsc --noEmit",
-		"clean": "rm -rf dist dist-test",
-		"prepublishOnly": "npm run clean && npm run build && npm test"
+		"test": "node --test test/*.test.mjs",
+		"lint": "biome check . --config-path ./biome.json",
+		"format": "biome check --write . --config-path ./biome.json",
+		"prepublishOnly": "npm test"
 	},
 	"keywords": [
 		"ai",
@@ -60,12 +47,11 @@
 	"engines": {
 		"node": ">=18.0.0"
 	},
-	"peerDependencies": {
-		"@ruah-dev/cli": ">=1.0.0"
+	"dependencies": {
+		"@ruah-dev/cli": "file:../ruah-cli",
+		"@ruah-dev/orch-core": "file:./packages/core"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "^2.4.10",
-		"@types/node": "^25.5.2",
-		"typescript": "^6.0.2"
+		"@biomejs/biome": "^2.4.10"
 	}
 }

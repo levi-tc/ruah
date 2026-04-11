@@ -39,7 +39,7 @@ export function detectTopLevelCli(): TopLevelCliDetection {
 }
 
 export function getPreferredOrchCommand(): string {
-	return detectTopLevelCli().installed ? "ruah" : "ruah-orch";
+	return "ruah";
 }
 
 export function formatTopLevelCliNotice(): string {
@@ -50,7 +50,7 @@ export function formatTopLevelCliNotice(): string {
 		return `Top-level CLI detected${versionSuffix}. Preferred command: ruah`;
 	}
 
-	return "Top-level CLI not detected. Install @ruah-dev/cli for the top-level `ruah` command: npm install -g @ruah-dev/cli";
+	return "Top-level CLI not detected. Install @ruah-dev/orch or @ruah-dev/cli to use the top-level `ruah` command.";
 }
 
 export function getUpdateInstallCommand(): string {
