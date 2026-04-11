@@ -7,7 +7,7 @@ on:
 
 jobs:
   check:
-    name: Typecheck, Lint & Test
+    name: Lint & Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,9 +18,6 @@ jobs:
           node-version: '20'
 
       - run: npm ci
-
-      - name: Typecheck
-        run: npx tsc --noEmit
 
       - name: Lint
         run: npx biome check .

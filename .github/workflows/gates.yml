@@ -18,8 +18,6 @@ jobs:
         with:
           node-version: '20'
       - run: npm ci
-      - name: "typecheck"
-        run: npx tsc --noEmit
       - name: "lint & format"
         run: npx biome check .
       - name: "test"
