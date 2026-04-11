@@ -122,7 +122,7 @@ jobs:
         working-directory: ruah-orch
 
       - name: Publish with provenance
-        run: npm publish --access public --provenance --tag "${{ steps.npm-tag.outputs.dist_tag }}"
+        run: npm publish --access public --provenance --tag "${{ steps.npm-tag.outputs.dist_tag }}" --ignore-scripts
         working-directory: ruah-orch
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
